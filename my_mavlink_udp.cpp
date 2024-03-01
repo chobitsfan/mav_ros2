@@ -16,10 +16,10 @@
 #include <sys/wait.h>
 #include <poll.h>
 #include <time.h>
-#include <ros/ros.h>
-#include <sensor_msgs/Imu.h>
-#include <geometry_msgs/PoseStamped.h>
-#include <nav_msgs/Odometry.h>
+//#include <ros/ros.h>
+//#include <sensor_msgs/Imu.h>
+//#include <geometry_msgs/PoseStamped.h>
+//#include <nav_msgs/Odometry.h>
 #include "mavlink/ardupilotmega/mavlink.h"
 
 #define MY_COMP_ID 191
@@ -121,18 +121,18 @@ int main(int argc, char *argv[]) {
 
     printf("hello\n");
 
-    ros::init(argc, argv, "mavlink_udp");
-    ros::NodeHandle ros_nh;
-    ROS_INFO("mavlink_udp ready");
+    //ros::init(argc, argv, "mavlink_udp");
+    //ros::NodeHandle ros_nh;
+    //ROS_INFO("mavlink_udp ready");
 
     //ros::Publisher imu_pub = ros_nh.advertise<sensor_msgs::Imu>("/chobits/imu", 100);
     //ros::Publisher goal_pub = ros_nh.advertise<geometry_msgs::PoseStamped>("/goal", 1);
-    ros::Publisher odo_pub = ros_nh.advertise<nav_msgs::Odometry>("/chobits/odometry", 10);
+    //ros::Publisher odo_pub = ros_nh.advertise<nav_msgs::Odometry>("/chobits/odometry", 10);
 
     memset(&status, 0, sizeof(status));
 
-    while (ros::ok()) {
-        retval = poll(pfds, MY_NUM_PFDS, 5000);
+    while (true) {
+        retval = poll(pfds, MY_NUM_PFDS, -1);
         if (retval > 0) {
             if (pfds[0].revents & POLLIN) {
                 avail = read(uart_fd, buf, 1024);
@@ -190,13 +190,11 @@ int main(int argc, char *argv[]) {
                             no_local_pos = false;
                             mavlink_local_position_ned_t local_pos;
                             mavlink_msg_local_position_ned_decode(&msg, &local_pos);
-                            
                             if (vins_apm_alt_diff == 0) {
                                 vins_apm_alt_diff = latest_vins_alt - ( -local_pos.z );
                                 printf("alt: vins, apm, diff %f %f %f\n", latest_vins_alt, -local_pos.z, vins_apm_alt_diff);
                             }
-                            
-                            nav_msgs::Odometry odo;
+                            /*nav_msgs::Odometry odo;
                             odo.header.stamp = ros::Time::now();
                             odo.header.frame_id = "world";
                             odo.child_frame_id = "world";
@@ -213,7 +211,7 @@ int main(int argc, char *argv[]) {
                             odo.twist.twist.angular.x = xacc;
                             odo.twist.twist.angular.y = -yacc;
                             odo.twist.twist.angular.z = -zacc;
-                            odo_pub.publish(odo);
+                            odo_pub.publish(odo);*/
                         }
                     }
                 }
@@ -258,7 +256,7 @@ int main(int argc, char *argv[]) {
                 }
             }
 #endif
-        }
+        } else break;
     }
 
     close(uart_fd);
