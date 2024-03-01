@@ -27,6 +27,9 @@
 #define SERVER_PATH "/tmp/chobits_server"
 #define SERVER_PATH2 "/tmp/chobits_server2"
 
+void sig_func(int sig) {
+}
+
 int main(int argc, char *argv[]) {
     struct pollfd pfds[MY_NUM_PFDS];
     struct timeval tv;
@@ -41,10 +44,8 @@ int main(int argc, char *argv[]) {
     struct sockaddr_un ipc_addr, ipc_addr2;
     uint8_t mav_sysid = 0;
     int ipc_fd, ipc_fd2;
-    float att_q_x =0, att_q_y = 0, att_q_z = 0, att_q_w = 0;
     int64_t time_offset_us = 0;
     bool no_local_pos = true;
-    float xacc = 0, yacc = 0, zacc = 0;
     int parse_error = 0, packet_rx_drop_count = 0;
     int64_t tc1_sent = 0;
     float vins_apm_alt_diff = 0;
@@ -118,6 +119,8 @@ int main(int argc, char *argv[]) {
     pfds[1].events = POLLIN;
     pfds[2].fd= ipc_fd2;
     pfds[2].events = POLLIN;
+
+    signal(SIGINT, sig_func);
 
     printf("hello\n");
 
@@ -262,6 +265,8 @@ int main(int argc, char *argv[]) {
     close(uart_fd);
     close(ipc_fd);
     close(ipc_fd2);
+    unlink(SERVER_PATH);
+    unlink(SERVER_PATH2);
 
     printf("bye\n");
 
