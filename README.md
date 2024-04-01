@@ -4,5 +4,4 @@ Build
 ```
     git submodule update --init --recursive
     ./build_it
-    
 ```
