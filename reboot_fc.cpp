@@ -36,7 +36,7 @@ int main(int argc, char *argv[]) {
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
     else
-        uart_fd = open("/dev/ttyTHS0", O_RDWR | O_NOCTTY);
+        uart_fd = open("/dev/ttyAMA0", O_RDWR | O_NOCTTY);
     if (uart_fd < 0) {
         printf("can not open serial port\n");
         return 1;
