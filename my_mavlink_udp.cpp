@@ -48,9 +48,7 @@ int main(int argc, char *argv[]) {
     struct sockaddr_un ipc_addr, ipc_addr2;
     uint8_t mav_sysid = 0;
     int ipc_fd, ipc_fd2;
-    int64_t time_offset_us = 0;
     int parse_error = 0, packet_rx_drop_count = 0;
-    int64_t tc1_sent = 0;
     bool guided_mode = false;
     int rack_angle_cd = 5;
     bool go_left = true;
@@ -165,14 +163,8 @@ int main(int argc, char *argv[]) {
                             if (msg.sysid != mav_sysid) {
                                 mav_sysid = msg.sysid;
                                 printf("found MAV %d\n", msg.sysid);
-                            }
-                            if (time_offset_us == 0) {
-                                gettimeofday(&tv, NULL);
-                                tc1_sent = tv.tv_sec*1000000000+tv.tv_usec*1000;
-                                mavlink_msg_timesync_pack(mav_sysid, MY_COMP_ID, &msg, 0, tc1_sent, mav_sysid, 1);
-                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                write(uart_fd, buf, len);
 
+                                gettimeofday(&tv, NULL);
                                 mavlink_msg_system_time_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000000+tv.tv_usec, 0);
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd, buf, len);
@@ -191,13 +183,6 @@ int main(int argc, char *argv[]) {
                                 mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_NAV_CONTROLLER_OUTPUT, 200000, 0, 0, 0, 0, 0);
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd, buf, len);
-                            }
-                        } else if (msg.msgid == MAVLINK_MSG_ID_TIMESYNC) {
-                            mavlink_timesync_t ts;
-                            mavlink_msg_timesync_decode(&msg, &ts);
-                            if (ts.ts1 == tc1_sent) {
-                                time_offset_us = (ts.ts1 - ts.tc1)/1000;
-                                printf("time offset %ld\n", time_offset_us);
                             }
                         } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
                             mavlink_statustext_t txt;
