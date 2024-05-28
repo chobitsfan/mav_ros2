@@ -27,10 +27,9 @@
 #define SERVER_PATH "/tmp/chobits_server"
 #define SERVER_PATH2 "/tmp/chobits_server2"
 
-#define RACK_NXT_VERT_M 1.8
+#define RACK_NXT_VERT_M 1.8f
 #define RACK_VERT_STOP_COUNT 1
 #define RACK_KEEP_DIST_MM 800
-#define RACK_KEEP_DIST_MARGIN_MM 100
 
 void sig_func(int sig) {
 }
@@ -242,24 +241,26 @@ int main(int argc, char *argv[]) {
                 if (recv(ipc_fd2, rack, sizeof(rack), 0) > 0) {
                     if (rack[0] == 0) {
                         if (guided_mode && expect_vert_bar) {
-                            printf("vertical bar, count %d, dist %d mm\n", rack_vert_count, rack[1]);
+                            printf("vertical bar, count %d, intersection offset (FRU in mm) %d, %d, %d\n", rack_vert_count, rack[1], rack[2], rack[3]);
                             expect_vert_bar = false;
                             nav_started = true;
                             float f_adj = 0, d_adj = 0;
-                            if (rack[1] < (RACK_KEEP_DIST_MM - RACK_KEEP_DIST_MARGIN_MM)) f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f; else if (rack[1] > (RACK_KEEP_DIST_MM + RACK_KEEP_DIST_MARGIN_MM)) f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f;
-                            if (rack[3] > 200) d_adj = -0.001 * rack[3] - 0.1; else if (rack[3] < -100) d_adj = -0.001 * rack[3] + 0.1;
+                            //if (rack[1] < (RACK_KEEP_DIST_MM - RACK_KEEP_DIST_MARGIN_MM)) f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f; else if (rack[1] > (RACK_KEEP_DIST_MM + RACK_KEEP_DIST_MARGIN_MM)) f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f;
+                            //if (rack[3] > 200) d_adj = -0.001 * rack[3] - 0.1; else if (rack[3] < -100) d_adj = -0.001 * rack[3] + 0.1;
+                            f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f;
+                            if (rack[3] != 0) d_adj = (100 - rack[3]) * 0.001f;
                             if (rack_vert_count >= RACK_VERT_STOP_COUNT) {
                                 go_left = !go_left;
                                 rack_vert_count = 0;
                             }
-                            float r_dst = RACK_NXT_VERT_M - rack[2] * 0.001f;
-                            if (go_left) r_dst = -RACK_NXT_VERT_M + rack[2] * 0.001f;
+                            float r_dst = 0;
+                            if (go_left) r_dst = -RACK_NXT_VERT_M + rack[2] * 0.001f; else r_dst = RACK_NXT_VERT_M + rack[2] * 0.001f;
                             ++rack_vert_count;
+                            printf("dst (FRD in m) %f, %f, %f\n", f_adj, r_dst, d_adj);
                             gettimeofday(&tv, NULL);
                             mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, f_adj, r_dst, d_adj, 0, 0, 0, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
-                            printf("wp %f\n", r_dst);
                         }
                     } else if (rack[0] == 1) {
                         if (guided_mode && rack_angle_cd > 4) {
