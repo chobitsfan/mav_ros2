@@ -45,11 +45,11 @@ int main(int argc, char *argv[]) {
     uint8_t mav_sysid = 0;
     int ipc_fd, ipc_fd2;
     int64_t time_offset_us = 0;
-    bool no_local_pos = true;
     int parse_error = 0, packet_rx_drop_count = 0;
     int64_t tc1_sent = 0;
-    float vins_apm_alt_diff = 0;
-    float latest_vins_alt = 0;
+    bool guided_mode = false;
+    int rack_vert_cd = 3;
+    bool go_left = true;
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -173,10 +173,11 @@ int main(int argc, char *argv[]) {
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd, buf, len);
                             }
-                            if (no_local_pos) {
-                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_LOCAL_POSITION_NED, 50000, 0, 0, 0, 0, 0);
-                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                write(uart_fd, buf, len);
+                            if (hb.custom_mode == COPTER_MODE_GUIDED) {
+                                guided_mode = true;
+                                ++rack_vert_cd;
+                            } else {
+                                guided_mode = false;
                             }
                         } else if (msg.msgid == MAVLINK_MSG_ID_TIMESYNC) {
                             mavlink_timesync_t ts;
@@ -189,32 +190,6 @@ int main(int argc, char *argv[]) {
                             mavlink_statustext_t txt;
                             mavlink_msg_statustext_decode(&msg, &txt);
                             printf("fc: %s\n", txt.text);
-                        } else if (msg.msgid == MAVLINK_MSG_ID_LOCAL_POSITION_NED) {
-                            no_local_pos = false;
-                            mavlink_local_position_ned_t local_pos;
-                            mavlink_msg_local_position_ned_decode(&msg, &local_pos);
-                            if (vins_apm_alt_diff == 0) {
-                                vins_apm_alt_diff = latest_vins_alt - ( -local_pos.z );
-                                printf("alt: vins, apm, diff %f %f %f\n", latest_vins_alt, -local_pos.z, vins_apm_alt_diff);
-                            }
-                            /*nav_msgs::Odometry odo;
-                            odo.header.stamp = ros::Time::now();
-                            odo.header.frame_id = "world";
-                            odo.child_frame_id = "world";
-                            odo.pose.pose.position.x = local_pos.x;
-                            odo.pose.pose.position.y = -local_pos.y;
-                            odo.pose.pose.position.z = -local_pos.z + vins_apm_alt_diff;
-                            odo.pose.pose.orientation.x = att_q_x;
-                            odo.pose.pose.orientation.y = -att_q_y;
-                            odo.pose.pose.orientation.z = -att_q_z;
-                            odo.pose.pose.orientation.w = att_q_w;
-                            odo.twist.twist.linear.x = local_pos.vx;
-                            odo.twist.twist.linear.y = -local_pos.vy;
-                            odo.twist.twist.linear.z = -local_pos.vz;
-                            odo.twist.twist.angular.x = xacc;
-                            odo.twist.twist.angular.y = -yacc;
-                            odo.twist.twist.angular.z = -zacc;
-                            odo_pub.publish(odo);*/
                         }
                     }
                 }
@@ -222,7 +197,6 @@ int main(int argc, char *argv[]) {
             if (pfds[1].revents & POLLIN) {
                 float pose[10];
                 if (recv(ipc_fd, pose, sizeof(pose), 0) > 0) {
-                    latest_vins_alt = pose[3];
                     float covar[21] = {0};
                     pose[2]=-pose[2];
                     pose[3]=-pose[3];
@@ -238,27 +212,24 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
-#if 0
             if (pfds[2].revents & POLLIN) {
-                float planner_msg[9];
-                if (recv(ipc_fd2, &planner_msg, sizeof(planner_msg), 0) > 0) {
-                    if (planner_msg[3] == 0 && planner_msg[4] == 0 && planner_msg[5] == 0) {
-                        if (demo_stage == 3) {
-                            demo_stage = 100;
-                            gettimeofday(&tv, NULL);
-                            mavlink_msg_set_mode_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, 9); //land
-                            len = mavlink_msg_to_send_buffer(buf, &msg);
-                            write(uart_fd, buf, len);
-                        }
-                    } else {
+                int rack[8] = {0};
+                if (recv(ipc_fd2, rack, sizeof(rack), 0) > 0) {
+                    if (guided_mode && rack_vert_cd > 2) {
+                        rack_vert_cd = 0;
                         gettimeofday(&tv, NULL);
-                        mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_LOCAL_NED, 0xc00, planner_msg[0], -planner_msg[1], -(planner_msg[2]-vins_apm_alt_diff), planner_msg[3], -planner_msg[4], -planner_msg[5], planner_msg[6], -planner_msg[7], -planner_msg[8], 0, 0);
+                        if (go_left) {
+                            go_left = false;
+                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, 0, -3, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                        } else {
+                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                            go_left = true;
+                        }
                         len = mavlink_msg_to_send_buffer(buf, &msg);
                         write(uart_fd, buf, len);
                     }
                 }
             }
-#endif
         } else break;
     }
 
