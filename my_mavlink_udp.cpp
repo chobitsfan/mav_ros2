@@ -50,12 +50,14 @@ int main(int argc, char *argv[]) {
     int ipc_fd, ipc_fd2;
     int parse_error = 0, packet_rx_drop_count = 0;
     bool guided_mode = false;
-    int rack_angle_cd = 5;
+    int rack_angle_cd = 0;
     bool go_left = true;
     int rack_vert_count = 0;
     bool expect_vert_bar = true;
     bool nav_msg_rcved = false;
     bool nav_started = false;
+    int wp_dist_cm = 0;
+    int rack_dist_cd = 0;
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -175,7 +177,8 @@ int main(int argc, char *argv[]) {
                             }
                             if (hb.custom_mode == COPTER_MODE_GUIDED) {
                                 guided_mode = true;
-                                ++rack_angle_cd;
+                                --rack_angle_cd;
+                                --rack_dist_cd;
                             } else {
                                 guided_mode = false;
                             }
@@ -193,8 +196,9 @@ int main(int argc, char *argv[]) {
                             if (nav_started) {
                                 mavlink_nav_controller_output_t nav_output;
                                 mavlink_msg_nav_controller_output_decode(&msg, &nav_output);
-                                if (nav_output.wp_dist < 20) { //my ardupilot branch change it to cm
-                                    printf("approaching wp %d cm\n", nav_output.wp_dist);
+                                wp_dist_cm = nav_output.wp_dist; //my ardupilot branch change it to cm
+                                if (wp_dist_cm < 20) {
+                                    printf("%d cm left to the WP\n", wp_dist_cm);
                                     expect_vert_bar = true;
                                     nav_started = false;
                                 }
@@ -230,8 +234,6 @@ int main(int argc, char *argv[]) {
                             expect_vert_bar = false;
                             nav_started = true;
                             float f_adj = 0, d_adj = 0;
-                            //if (rack[1] < (RACK_KEEP_DIST_MM - RACK_KEEP_DIST_MARGIN_MM)) f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f; else if (rack[1] > (RACK_KEEP_DIST_MM + RACK_KEEP_DIST_MARGIN_MM)) f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f;
-                            //if (rack[3] > 200) d_adj = -0.001 * rack[3] - 0.1; else if (rack[3] < -100) d_adj = -0.001 * rack[3] + 0.1;
                             f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f;
                             if (rack[3] != 0) d_adj = (100 - rack[3]) * 0.001f;
                             if (rack_vert_count >= RACK_VERT_STOP_COUNT) {
@@ -248,18 +250,35 @@ int main(int argc, char *argv[]) {
                             write(uart_fd, buf, len);
                         }
                     } else if (rack[0] == 1) {
-                        if (guided_mode && rack_angle_cd > 4) {
-                            rack_angle_cd = 0;
-                            int dir = -1;
+                        if (guided_mode) {
                             float deg = rack[1] * 0.01f;
-                            if (deg < 0) {
-                                dir = 1;
-                                deg = -deg;
+                            int rack_dist_mm = rack[2];
+                            int rack_vert_mm = rack[3];
+                            if (rack_angle_cd < 0 && (deg < -5 || deg > 5)) {
+                                rack_angle_cd = 4;
+                                if (rack_dist_cd < 2) rack_dist_cd = 2;
+                                int dir = -1;
+                                if (deg < 0) {
+                                    dir = 1;
+                                    deg = -deg;
+                                }
+                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_CONDITION_YAW, 0, deg, 0, dir, 1, 0, 0, 0);
+                                len = mavlink_msg_to_send_buffer(buf, &msg);
+                                write(uart_fd, buf, len);
+                                printf("yaw %f degree, dir %d\n", deg, dir);
                             }
-                            mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_CONDITION_YAW, 0, deg, 0, dir, 1, 0, 0, 0);
-                            len = mavlink_msg_to_send_buffer(buf, &msg);
-                            write(uart_fd, buf, len);
-                            printf("yaw %f degree, dir %d\n", deg, dir);
+                            if (rack_dist_cd < 0 && (rack_dist_mm < 400 || rack_dist_mm > 1200)) {
+                                rack_dist_cd = 4;
+                                float f_adj = (rack_dist_mm - RACK_KEEP_DIST_MM) * 0.001f;
+                                float r_dst = wp_dist_cm * 0.01f;
+                                if (go_left) r_dst = -r_dst;
+                                float d_adj = (100 - rack_vert_mm) * 0.001f;
+                                printf("adj (FRD in m) %f, %f, %f\n", f_adj, r_dst, d_adj);
+                                gettimeofday(&tv, NULL);
+                                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, f_adj, r_dst, d_adj, 0, 0, 0, 0, 0, 0, 0, 0);
+                                len = mavlink_msg_to_send_buffer(buf, &msg);
+                                write(uart_fd, buf, len);
+                            }
                         }
                     }
                 }
