@@ -49,6 +49,7 @@ int main(int argc, char *argv[]) {
     int64_t tc1_sent = 0;
     bool guided_mode = false;
     int rack_vert_cd = 5;
+    int rack_angle_cd = 5;
     bool go_left = true;
 
     if (argc > 1)
@@ -176,6 +177,7 @@ int main(int argc, char *argv[]) {
                             if (hb.custom_mode == COPTER_MODE_GUIDED) {
                                 guided_mode = true;
                                 ++rack_vert_cd;
+                                ++rack_angle_cd;
                             } else {
                                 guided_mode = false;
                             }
@@ -215,17 +217,34 @@ int main(int argc, char *argv[]) {
             if (pfds[2].revents & POLLIN) {
                 int rack[8] = {0};
                 if (recv(ipc_fd2, rack, sizeof(rack), 0) > 0) {
-                    if (guided_mode && rack_vert_cd > 4) {
-                        rack_vert_cd = 0;
-                        float f_adj = 0;
-                        if (rack[1] < 600) f_adj = -0.2; else if (rack[1] > 1000) f_adj = 0.2;
-                        float r_dst = 2;
-                        if (go_left) r_dst = -2;
-                        go_left = !go_left;
-                        gettimeofday(&tv, NULL);
-                        mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, f_adj, r_dst, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-                        len = mavlink_msg_to_send_buffer(buf, &msg);
-                        write(uart_fd, buf, len);
+                    if (rack[0] == 0) {
+                        if (guided_mode && rack_vert_cd > 4) {
+                            rack_vert_cd = 0;
+                            float f_adj = 0;
+                            if (rack[1] < 600) f_adj = -0.2; else if (rack[1] > 1000) f_adj = 0.2;
+                            float r_dst = 2;
+                            if (go_left) r_dst = -2;
+                            go_left = !go_left;
+                            gettimeofday(&tv, NULL);
+                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, f_adj, r_dst, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd, buf, len);
+                        }
+                    } else if (rack[0] == 1) {
+                        if (guided_mode && rack_angle_cd > 4) {
+                            rack_angle_cd = 0;
+                            int dir = -1;
+                            float deg = rack[1] * 0.01f;
+                            if (deg < 0) {
+                                dir = 1;
+                                deg = -deg;
+                            }
+                            gettimeofday(&tv, NULL);
+                            mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_CONDITION_YAW, 0, deg, 10, dir, 1, 0, 0, 0);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd, buf, len);
+                            printf("yaw %f degree, dir %d\n", deg, dir);
+                        }
                     }
                 }
             }
