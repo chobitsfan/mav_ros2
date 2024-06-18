@@ -228,13 +228,14 @@ int main(int argc, char *argv[]) {
                     if (rack[0] == 0) {
                         if (guided_mode && rack_vert_cd > 4) {
                             rack_vert_cd = 0;
-                            float f_adj = 0;
+                            float f_adj = 0, d_adj = 0;
                             if (rack[1] < 600) f_adj = -0.2; else if (rack[1] > 1000) f_adj = 0.2;
+                            if (rack[2] > 200) d_adj = -0.1; else if (rack[2] < -100) d_adj = 0.2;
                             float r_dst = 2;
                             if (go_left) r_dst = -2;
                             go_left = !go_left;
                             gettimeofday(&tv, NULL);
-                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, f_adj, r_dst, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, f_adj, r_dst, d_adj, 0, 0, 0, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
                         }
