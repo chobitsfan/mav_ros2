@@ -51,6 +51,7 @@ int main(int argc, char *argv[]) {
     int rack_vert_cd = 5;
     int rack_angle_cd = 5;
     bool go_left = true;
+    int yaw_test_cd = 5;
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -178,6 +179,13 @@ int main(int argc, char *argv[]) {
                                 guided_mode = true;
                                 ++rack_vert_cd;
                                 ++rack_angle_cd;
+                                /*--yaw_test_cd;
+                                if (yaw_test_cd < 0) {
+                                    yaw_test_cd = 5;
+                                    mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_CONDITION_YAW, 0, 10, 0, 1, 1, 0, 0, 0);
+                                    len = mavlink_msg_to_send_buffer(buf, &msg);
+                                    write(uart_fd, buf, len);
+                                }*/
                             } else {
                                 guided_mode = false;
                             }
@@ -239,8 +247,7 @@ int main(int argc, char *argv[]) {
                                 dir = 1;
                                 deg = -deg;
                             }
-                            gettimeofday(&tv, NULL);
-                            mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_CONDITION_YAW, 0, deg, 10, dir, 1, 0, 0, 0);
+                            mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_CONDITION_YAW, 0, deg, 0, dir, 1, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
                             printf("yaw %f degree, dir %d\n", deg, dir);
