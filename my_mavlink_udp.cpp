@@ -27,6 +27,11 @@
 #define SERVER_PATH "/tmp/chobits_server"
 #define SERVER_PATH2 "/tmp/chobits_server2"
 
+#define RACK_NXT_VERT_MAX_M 2
+#define RACK_VERT_STOP_COUNT 1
+#define RACK_KEEP_DIST_MM 800
+#define RACK_KEEP_DIST_MARGIN_MM 200
+
 void sig_func(int sig) {
 }
 
@@ -51,7 +56,7 @@ int main(int argc, char *argv[]) {
     int rack_vert_cd = 5;
     int rack_angle_cd = 5;
     bool go_left = true;
-    int yaw_test_cd = 5;
+    int rack_vert_count = 0;
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -179,13 +184,6 @@ int main(int argc, char *argv[]) {
                                 guided_mode = true;
                                 ++rack_vert_cd;
                                 ++rack_angle_cd;
-                                /*--yaw_test_cd;
-                                if (yaw_test_cd < 0) {
-                                    yaw_test_cd = 5;
-                                    mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_CONDITION_YAW, 0, 10, 0, 1, 1, 0, 0, 0);
-                                    len = mavlink_msg_to_send_buffer(buf, &msg);
-                                    write(uart_fd, buf, len);
-                                }*/
                             } else {
                                 guided_mode = false;
                             }
@@ -228,12 +226,17 @@ int main(int argc, char *argv[]) {
                     if (rack[0] == 0) {
                         if (guided_mode && rack_vert_cd > 4) {
                             rack_vert_cd = 0;
+                            printf("vertical bar %d %d\n", rack[1], rack[2]);
                             float f_adj = 0, d_adj = 0;
-                            if (rack[1] < 600) f_adj = -0.2; else if (rack[1] > 1000) f_adj = 0.2;
+                            if (rack[1] < (RACK_KEEP_DIST_MM - RACK_KEEP_DIST_MARGIN_MM)) f_adj = -RACK_KEEP_DIST_MARGIN_MM * 0.001; else if (rack[1] > (RACK_KEEP_DIST_MM + RACK_KEEP_DIST_MARGIN_MM)) f_adj = RACK_KEEP_DIST_MARGIN_MM * 0.001;
                             if (rack[2] > 200) d_adj = -0.1; else if (rack[2] < -100) d_adj = 0.2;
-                            float r_dst = 2;
-                            if (go_left) r_dst = -2;
-                            go_left = !go_left;
+                            if (rack_vert_count >= RACK_VERT_STOP_COUNT) {
+                                go_left = !go_left;
+                                rack_vert_count = 0;
+                            }
+                            float r_dst = RACK_NXT_VERT_MAX_M;
+                            if (go_left) r_dst = -RACK_NXT_VERT_MAX_M;
+                            ++rack_vert_count;
                             gettimeofday(&tv, NULL);
                             mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, f_adj, r_dst, d_adj, 0, 0, 0, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
