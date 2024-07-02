@@ -27,10 +27,10 @@
 #define SERVER_PATH "/tmp/chobits_server"
 #define SERVER_PATH2 "/tmp/chobits_server2"
 
-#define RACK_NXT_VERT_MAX_M 2
-#define RACK_VERT_STOP_COUNT 1
+#define RACK_NXT_VERT_MAX_M 4
+#define RACK_VERT_STOP_COUNT 5
 #define RACK_KEEP_DIST_MM 800
-#define RACK_KEEP_DIST_MARGIN_MM 200
+#define RACK_KEEP_DIST_MARGIN_MM 100
 
 void sig_func(int sig) {
 }
@@ -228,8 +228,8 @@ int main(int argc, char *argv[]) {
                             rack_vert_cd = 0;
                             printf("vertical bar, count %d, dist %d mm\n", rack_vert_count, rack[1]);
                             float f_adj = 0, d_adj = 0;
-                            if (rack[1] < (RACK_KEEP_DIST_MM - RACK_KEEP_DIST_MARGIN_MM)) f_adj = -RACK_KEEP_DIST_MARGIN_MM * 0.001; else if (rack[1] > (RACK_KEEP_DIST_MM + RACK_KEEP_DIST_MARGIN_MM)) f_adj = RACK_KEEP_DIST_MARGIN_MM * 0.001;
-                            if (rack[2] > 200) d_adj = -0.1; else if (rack[2] < -100) d_adj = 0.2;
+                            if (rack[1] < (RACK_KEEP_DIST_MM - RACK_KEEP_DIST_MARGIN_MM)) f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f; else if (rack[1] > (RACK_KEEP_DIST_MM + RACK_KEEP_DIST_MARGIN_MM)) f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f;
+                            if (rack[2] > 200) d_adj = -0.001 * rack[2] - 0.1; else if (rack[2] < -100) d_adj = -0.001 * rack[2] + 0.1;
                             if (rack_vert_count >= RACK_VERT_STOP_COUNT) {
                                 go_left = !go_left;
                                 rack_vert_count = 0;
