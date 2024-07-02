@@ -226,7 +226,7 @@ int main(int argc, char *argv[]) {
                     if (rack[0] == 0) {
                         if (guided_mode && rack_vert_cd > 4) {
                             rack_vert_cd = 0;
-                            printf("vertical bar %d %d\n", rack[1], rack[2]);
+                            printf("vertical bar, count %d, dist %d mm\n", rack_vert_count, rack[1]);
                             float f_adj = 0, d_adj = 0;
                             if (rack[1] < (RACK_KEEP_DIST_MM - RACK_KEEP_DIST_MARGIN_MM)) f_adj = -RACK_KEEP_DIST_MARGIN_MM * 0.001; else if (rack[1] > (RACK_KEEP_DIST_MM + RACK_KEEP_DIST_MARGIN_MM)) f_adj = RACK_KEEP_DIST_MARGIN_MM * 0.001;
                             if (rack[2] > 200) d_adj = -0.1; else if (rack[2] < -100) d_adj = 0.2;
