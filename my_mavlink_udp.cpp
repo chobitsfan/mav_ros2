@@ -27,8 +27,8 @@
 #define SERVER_PATH "/tmp/chobits_server"
 #define SERVER_PATH2 "/tmp/chobits_server2"
 
-#define RACK_NXT_VERT_MAX_M 4
-#define RACK_VERT_STOP_COUNT 5
+#define RACK_NXT_VERT_M 1.8
+#define RACK_VERT_STOP_COUNT 1
 #define RACK_KEEP_DIST_MM 800
 #define RACK_KEEP_DIST_MARGIN_MM 100
 
@@ -53,10 +53,12 @@ int main(int argc, char *argv[]) {
     int parse_error = 0, packet_rx_drop_count = 0;
     int64_t tc1_sent = 0;
     bool guided_mode = false;
-    int rack_vert_cd = 5;
     int rack_angle_cd = 5;
     bool go_left = true;
     int rack_vert_count = 0;
+    bool expect_vert_bar = true;
+    bool nav_msg_rcved = false;
+    bool nav_started = false;
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -182,10 +184,14 @@ int main(int argc, char *argv[]) {
                             }
                             if (hb.custom_mode == COPTER_MODE_GUIDED) {
                                 guided_mode = true;
-                                ++rack_vert_cd;
                                 ++rack_angle_cd;
                             } else {
                                 guided_mode = false;
+                            }
+                            if (!nav_msg_rcved) {
+                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_NAV_CONTROLLER_OUTPUT, 200000, 0, 0, 0, 0, 0);
+                                len = mavlink_msg_to_send_buffer(buf, &msg);
+                                write(uart_fd, buf, len);
                             }
                         } else if (msg.msgid == MAVLINK_MSG_ID_TIMESYNC) {
                             mavlink_timesync_t ts;
@@ -198,6 +204,17 @@ int main(int argc, char *argv[]) {
                             mavlink_statustext_t txt;
                             mavlink_msg_statustext_decode(&msg, &txt);
                             printf("fc: %s\n", txt.text);
+                        } else if (msg.msgid == MAVLINK_MSG_ID_NAV_CONTROLLER_OUTPUT) {
+                            nav_msg_rcved = true;
+                            if (nav_started) {
+                                mavlink_nav_controller_output_t nav_output;
+                                mavlink_msg_nav_controller_output_decode(&msg, &nav_output);
+                                if (nav_output.wp_dist < 20) { //my ardupilot branch change it to cm
+                                    printf("approaching wp %d cm\n", nav_output.wp_dist);
+                                    expect_vert_bar = true;
+                                    nav_started = false;
+                                }
+                            }
                         }
                     }
                 }
@@ -224,23 +241,25 @@ int main(int argc, char *argv[]) {
                 int rack[8] = {0};
                 if (recv(ipc_fd2, rack, sizeof(rack), 0) > 0) {
                     if (rack[0] == 0) {
-                        if (guided_mode && rack_vert_cd > 4) {
-                            rack_vert_cd = 0;
+                        if (guided_mode && expect_vert_bar) {
                             printf("vertical bar, count %d, dist %d mm\n", rack_vert_count, rack[1]);
+                            expect_vert_bar = false;
+                            nav_started = true;
                             float f_adj = 0, d_adj = 0;
                             if (rack[1] < (RACK_KEEP_DIST_MM - RACK_KEEP_DIST_MARGIN_MM)) f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f; else if (rack[1] > (RACK_KEEP_DIST_MM + RACK_KEEP_DIST_MARGIN_MM)) f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f;
-                            if (rack[2] > 200) d_adj = -0.001 * rack[2] - 0.1; else if (rack[2] < -100) d_adj = -0.001 * rack[2] + 0.1;
+                            if (rack[3] > 200) d_adj = -0.001 * rack[3] - 0.1; else if (rack[3] < -100) d_adj = -0.001 * rack[3] + 0.1;
                             if (rack_vert_count >= RACK_VERT_STOP_COUNT) {
                                 go_left = !go_left;
                                 rack_vert_count = 0;
                             }
-                            float r_dst = RACK_NXT_VERT_MAX_M;
-                            if (go_left) r_dst = -RACK_NXT_VERT_MAX_M;
+                            float r_dst = RACK_NXT_VERT_M - rack[2] * 0.001f;
+                            if (go_left) r_dst = -RACK_NXT_VERT_M + rack[2] * 0.001f;
                             ++rack_vert_count;
                             gettimeofday(&tv, NULL);
                             mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, f_adj, r_dst, d_adj, 0, 0, 0, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
+                            printf("wp %f\n", r_dst);
                         }
                     } else if (rack[0] == 1) {
                         if (guided_mode && rack_angle_cd > 4) {
