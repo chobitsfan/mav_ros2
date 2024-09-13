@@ -58,6 +58,8 @@ int main(int argc, char *argv[]) {
     bool nav_started = false;
     int wp_dist_cm = 0;
     int rack_dist_cd = 0;
+    bool att_rcved = false;
+    float cur_pitch = 0;
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -183,7 +185,12 @@ int main(int argc, char *argv[]) {
                                 guided_mode = false;
                             }
                             if (!nav_msg_rcved) {
-                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_NAV_CONTROLLER_OUTPUT, 200000, 0, 0, 0, 0, 0);
+                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_NAV_CONTROLLER_OUTPUT, 100000, 0, 0, 0, 0, 0);
+                                len = mavlink_msg_to_send_buffer(buf, &msg);
+                                write(uart_fd, buf, len);
+                            }
+                            if (!att_rcved) {
+                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_ATTITUDE, 100000, 0, 0, 0, 0, 0);
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd, buf, len);
                             }
@@ -203,6 +210,11 @@ int main(int argc, char *argv[]) {
                                     nav_started = false;
                                 }
                             }
+                        } else if (msg.msgid == MAVLINK_MSG_ID_ATTITUDE) {
+                            att_rcved = true;
+                            mavlink_attitude_t att;
+                            mavlink_msg_attitude_decode(&msg, &att);
+                            cur_pitch = att.pitch;
                         }
                     }
                 }
@@ -231,32 +243,35 @@ int main(int argc, char *argv[]) {
                     if (rack[0] == 0) {
                         if (guided_mode && expect_vert_bar) {
                             printf("vertical bar, count %d, intersection offset (FRU in mm) %d, %d, %d\n", rack_vert_count, rack[1], rack[2], rack[3]);
-                            expect_vert_bar = false;
-                            nav_started = true;
-                            float f_adj = 0, d_adj = 0;
-                            f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f;
-                            if (rack[3] != 0) d_adj = (100 - rack[3]) * 0.001f;
-                            if (rack_vert_count >= RACK_VERT_STOP_COUNT) {
-                                go_left = !go_left;
-                                rack_vert_count = 0;
+                            if (cur_pitch > 0.04f || cur_pitch < -0.04f) {
+                                printf("pitch %f, exceed threshold\n", cur_pitch);
+                            } else {
+                                expect_vert_bar = false;
+                                nav_started = true;
+                                float f_adj = 0, d_adj = 0;
+                                f_adj = (rack[1] - RACK_KEEP_DIST_MM) * 0.001f;
+                                if (rack[3] != 0) d_adj = (100 - rack[3]) * 0.001f;
+                                if (rack_vert_count >= RACK_VERT_STOP_COUNT) {
+                                    go_left = !go_left;
+                                    rack_vert_count = 0;
+                                }
+                                float r_dst = 0;
+                                if (go_left) r_dst = -RACK_NXT_VERT_M + rack[2] * 0.001f; else r_dst = RACK_NXT_VERT_M + rack[2] * 0.001f;
+                                ++rack_vert_count;
+                                printf("dst (FRD in m) %f, %f, %f\n", f_adj, r_dst, d_adj);
+                                gettimeofday(&tv, NULL);
+                                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, f_adj, r_dst, d_adj, 0, 0, 0, 0, 0, 0, 0, 0);
+                                len = mavlink_msg_to_send_buffer(buf, &msg);
+                                write(uart_fd, buf, len);
                             }
-                            float r_dst = 0;
-                            if (go_left) r_dst = -RACK_NXT_VERT_M + rack[2] * 0.001f; else r_dst = RACK_NXT_VERT_M + rack[2] * 0.001f;
-                            ++rack_vert_count;
-                            printf("dst (FRD in m) %f, %f, %f\n", f_adj, r_dst, d_adj);
-                            gettimeofday(&tv, NULL);
-                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, f_adj, r_dst, d_adj, 0, 0, 0, 0, 0, 0, 0, 0);
-                            len = mavlink_msg_to_send_buffer(buf, &msg);
-                            write(uart_fd, buf, len);
                         }
                     } else if (rack[0] == 1) {
                         if (guided_mode) {
                             float deg = rack[1] * 0.01f;
                             int rack_dist_mm = rack[2];
                             int rack_vert_mm = rack[3];
-                            if (rack_angle_cd < 0 && (deg < -5 || deg > 5)) {
-                                rack_angle_cd = 4;
-                                if (rack_dist_cd < 2) rack_dist_cd = 2;
+                            if (rack_angle_cd < 0 && (deg < -10 || deg > 10)) {
+                                rack_angle_cd = 6;
                                 int dir = -1;
                                 if (deg < 0) {
                                     dir = 1;
