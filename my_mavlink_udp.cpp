@@ -28,7 +28,6 @@
 #define SERVER_PATH2 "/tmp/chobits_server2"
 
 #define RACK_KEEP_DIST_MM 800
-#define NUM_MISSIONS 5
 
 void sig_func(int sig) {
 }
@@ -50,11 +49,13 @@ int main(int argc, char *argv[]) {
     int parse_error = 0, packet_rx_drop_count = 0;
     bool att_rcved = false;
     float cur_pitch = 0;
-    int missions[NUM_MISSIONS][2] = {
+    int missions[][2] = { //struct type bitmask, cmd
         {1, 1},
         {1, 2},
+        {2, 2},
         {2, 3},
         {1, 4},
+        {2, 4},
         {2, 0}
     };
     int mission_idx = -1;
@@ -245,7 +246,7 @@ int main(int argc, char *argv[]) {
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
 
-                            ++mission_idx;
+                            if (cmd > 0) ++mission_idx;
                             mission_cd = 10;
                             printf("mission idx: %d\n", mission_idx);
                         }
