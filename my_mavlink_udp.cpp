@@ -176,10 +176,11 @@ int main(int argc, char *argv[]) {
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd, buf, len);
                             }
-                            if (hb.custom_mode == COPTER_MODE_GUIDED && mission_idx == -1) {
-                                printf("mission start\n");
-                                mission_idx = 0;
-                                --mission_cd;
+                            if (hb.custom_mode == COPTER_MODE_GUIDED) {
+                                if (mission_idx == -1) {
+                                    printf("mission start\n");
+                                    mission_idx = 0;
+                                }
                             } else {
                                 mission_idx = -1;
                             }
@@ -222,7 +223,8 @@ int main(int argc, char *argv[]) {
             if (pfds[2].revents & POLLIN) {
                 int rack[8] = {0};
                 if (recv(ipc_fd2, rack, sizeof(rack), 0) > 0) {
-                    if (mission_idx >= 0 && mission_cd <= 0) {
+                    --mission_cd;
+                    if (mission_idx >= 0 && mission_cd < 0) {
                         int struct_detect = rack[0];
                         int* mission = missions[mission_idx];
                         int struct_expect = mission[0];
@@ -230,13 +232,13 @@ int main(int argc, char *argv[]) {
                             float vel_r = 0, vel_d = 0;
                             int cmd = mission[1];
                             if (cmd == 1) {
-                                vel_r = -0.3;
+                                vel_r = -0.2;
                             } else if (cmd == 2) {
-                                vel_d = -0.3;
+                                vel_d = -0.2;
                             } else if (cmd == 3) {
-                                vel_r = 0.3;
+                                vel_r = 0.2;
                             } else if (cmd == 4) {
-                                vel_d = 0.3;
+                                vel_d = 0.2;
                             }
                             gettimeofday(&tv, NULL);
                             mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, 0, vel_r, vel_d, 0, 0, 0, 0, 0);
@@ -244,7 +246,8 @@ int main(int argc, char *argv[]) {
                             write(uart_fd, buf, len);
 
                             ++mission_idx;
-                            mission_cd = 1;
+                            mission_cd = 10;
+                            printf("mission idx: %d\n", mission_idx);
                         }
                     }
                 }
