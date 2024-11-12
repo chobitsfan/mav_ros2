@@ -27,7 +27,7 @@
 #define SERVER_PATH "/tmp/chobits_server"
 #define SERVER_PATH2 "/tmp/chobits_server2"
 
-#define RACK_KEEP_DIST_MM 800
+#define MAX_WP_DIST_M 8
 
 void sig_func(int sig) {
 }
@@ -59,6 +59,8 @@ int main(int argc, char *argv[]) {
     };
     int mission_idx = -1;
     int detect_cd = 0;
+    float cur_vio_x = 0, cur_vio_y = 0, cur_vio_z = 0;
+    float wp_vio_x = 0, wp_vio_y = 0, wp_vio_z = 0;
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -180,6 +182,16 @@ int main(int argc, char *argv[]) {
                                 if (mission_idx == -1) {
                                     printf("mission start\n");
                                     mission_idx = 0;
+                                } else {
+                                    float x_diff = cur_vio_x - wp_vio_x;
+                                    float y_diff = cur_vio_y - wp_vio_y;
+                                    float z_diff = cur_vio_z - wp_vio_z;
+                                    if ((x_diff * x_diff + y_diff * y_diff + z_diff * z_diff) > (MAX_WP_DIST_M * MAX_WP_DIST_M)) {
+                                        printf("exceed MAX_WP_DIST_M, abort mission\n");
+                                        mavlink_msg_set_mode_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, 9); //land
+                                        len = mavlink_msg_to_send_buffer(buf, &msg);
+                                        write(uart_fd, buf, len);
+                                    }
                                 }
                             } else {
                                 mission_idx = -1;
@@ -218,6 +230,9 @@ int main(int argc, char *argv[]) {
                         len = mavlink_msg_to_send_buffer(buf, &msg);
                         write(uart_fd, buf, len);
                     }
+                    cur_vio_x = pose[4];
+                    cur_vio_y = pose[5];
+                    cur_vio_z = pose[6];
                 }
             }
             if (pfds[2].revents & POLLIN) {
@@ -247,9 +262,14 @@ int main(int argc, char *argv[]) {
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd, buf, len);
 
-                                if (cmd > 0) ++mission_idx;
-                                detect_cd = 20;
-                                printf("mission idx: %d\n", mission_idx);
+                                if (cmd > 0) {
+                                    ++mission_idx;
+                                    printf("mission idx: %d\n", mission_idx);
+                                    wp_vio_x = cur_vio_x;
+                                    wp_vio_y = cur_vio_y;
+                                    wp_vio_z = cur_vio_z;
+                                }
+                                detect_cd = 40;
                                 no_new_cmd = false;
                             }
                         }
