@@ -52,14 +52,13 @@ int main(int argc, char *argv[]) {
     int missions[][2] = { //struct type bitmask, cmd
         {1, 1},
         {1, 2},
-        {2, 2},
         {2, 3},
-        {1, 4},
-        {2, 4},
-        {2, 0}
+        {1, 2},
+        {2, 1},
+        {1, 0}
     };
     int mission_idx = -1;
-    int mission_cd = 0;
+    int detect_cd = 0;
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -224,14 +223,39 @@ int main(int argc, char *argv[]) {
             if (pfds[2].revents & POLLIN) {
                 int rack[8] = {0};
                 if (recv(ipc_fd2, rack, sizeof(rack), 0) > 0) {
-                    --mission_cd;
-                    if (mission_idx >= 0 && mission_cd < 0) {
-                        int struct_detect = rack[0];
-                        int* mission = missions[mission_idx];
-                        int struct_expect = mission[0];
-                        if (struct_expect & struct_detect ) {
+                    --detect_cd;
+                    if (mission_idx >= 0) {
+                        bool no_new_cmd = true;
+                        if (detect_cd < 0) {
+                            int struct_detect = rack[0];
+                            int* mission = missions[mission_idx];
+                            int struct_expect = mission[0];
+                            if (struct_expect & struct_detect ) {
+                                float vel_r = 0, vel_d = 0;
+                                int cmd = mission[1];
+                                if (cmd == 1) {
+                                    vel_r = -0.2;
+                                } else if (cmd == 2) {
+                                    vel_d = -0.2;
+                                } else if (cmd == 3) {
+                                    vel_r = 0.2;
+                                } else if (cmd == 4) {
+                                    vel_d = 0.2;
+                                }
+                                gettimeofday(&tv, NULL);
+                                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, 0, vel_r, vel_d, 0, 0, 0, 0, 0);
+                                len = mavlink_msg_to_send_buffer(buf, &msg);
+                                write(uart_fd, buf, len);
+
+                                if (cmd > 0) ++mission_idx;
+                                detect_cd = 20;
+                                printf("mission idx: %d\n", mission_idx);
+                                no_new_cmd = false;
+                            }
+                        }
+                        if (no_new_cmd) {
                             float vel_r = 0, vel_d = 0;
-                            int cmd = mission[1];
+                            int cmd = missions[mission_idx-1][1];
                             if (cmd == 1) {
                                 vel_r = -0.2;
                             } else if (cmd == 2) {
@@ -245,10 +269,6 @@ int main(int argc, char *argv[]) {
                             mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, 0, vel_r, vel_d, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
-
-                            if (cmd > 0) ++mission_idx;
-                            mission_cd = 10;
-                            printf("mission idx: %d\n", mission_idx);
                         }
                     }
                 }
