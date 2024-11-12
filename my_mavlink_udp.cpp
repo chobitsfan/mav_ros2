@@ -253,7 +253,7 @@ int main(int argc, char *argv[]) {
                                 no_new_cmd = false;
                             }
                         }
-                        if (no_new_cmd) {
+                        if (no_new_cmd && mission_idx > 0) {
                             float vel_r = 0, vel_d = 0;
                             int cmd = missions[mission_idx-1][1];
                             if (cmd == 1) {
