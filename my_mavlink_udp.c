@@ -16,10 +16,6 @@
 #include <sys/wait.h>
 #include <poll.h>
 #include <time.h>
-//#include <ros/ros.h>
-//#include <sensor_msgs/Imu.h>
-//#include <geometry_msgs/PoseStamped.h>
-//#include <nav_msgs/Odometry.h>
 #include "mavlink/ardupilotmega/mavlink.h"
 
 #define MY_COMP_ID 191
@@ -236,9 +232,10 @@ int main(int argc, char *argv[]) {
                 }
             }
             if (pfds[2].revents & POLLIN) {
-                int rack[8] = {0};
+                float rack[13] = {0};
                 if (recv(ipc_fd2, rack, sizeof(rack), 0) > 0) {
-                    --detect_cd;
+                    printf("ok\n");
+                    /*--detect_cd;
                     if (mission_idx >= 0) {
                         bool no_new_cmd = true;
                         if (detect_cd < 0) {
@@ -295,7 +292,7 @@ int main(int argc, char *argv[]) {
                                 write(uart_fd, buf, len);
                             }
                         }
-                    }
+                    }*/
                 }
             }
         } else break;
