@@ -17,6 +17,8 @@
 #include <poll.h>
 #include <time.h>
 #include "mavlink/ardupilotmega/mavlink.h"
+#include "rclcpp/rclcpp.hpp"
+#include "std_msgs/msg/string.hpp"
 
 #define MY_COMP_ID 191
 #define MY_NUM_PFDS 3
@@ -50,9 +52,6 @@ struct __attribute__((packed)) lines_3d {
     float hori_vz;
 };
 
-void sig_func(int sig) {
-}
-
 int main(int argc, char *argv[]) {
     struct pollfd pfds[MY_NUM_PFDS];
     struct timeval tv;
@@ -74,7 +73,11 @@ int main(int argc, char *argv[]) {
         MOVE_LEFT,
         MOVE_UP,
         MOVE_RIGHT,
+        MOVE_DOWN,
+        MOVE_LEFT,
         MOVE_UP,
+        MOVE_RIGHT,
+        MOVE_DOWN,
         MOVE_LEFT,
         LAND,
     };
@@ -85,6 +88,11 @@ int main(int argc, char *argv[]) {
     int confirm_cnt = 0;
     int navi_status = SEARCH_STRUCT_CROSS;
     int move_status = HOVER;
+    int low_confirm_cnt = 0;
+
+    rclcpp::init(argc, argv);
+    auto node = rclcpp::Node::make_shared("mavlink_udp");
+    auto navi_pub = node->create_publisher<std_msgs::msg::String>("navi", 1);
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -155,21 +163,11 @@ int main(int argc, char *argv[]) {
     pfds[2].fd= ipc_fd2;
     pfds[2].events = POLLIN;
 
-    signal(SIGINT, sig_func);
-
     printf("hello\n");
-
-    //ros::init(argc, argv, "mavlink_udp");
-    //ros::NodeHandle ros_nh;
-    //ROS_INFO("mavlink_udp ready");
-
-    //ros::Publisher imu_pub = ros_nh.advertise<sensor_msgs::Imu>("/chobits/imu", 100);
-    //ros::Publisher goal_pub = ros_nh.advertise<geometry_msgs::PoseStamped>("/goal", 1);
-    //ros::Publisher odo_pub = ros_nh.advertise<nav_msgs::Odometry>("/chobits/odometry", 10);
 
     memset(&status, 0, sizeof(status));
 
-    while (true) {
+    while (rclcpp::ok()) {
         retval = poll(pfds, MY_NUM_PFDS, -1);
         if (retval > 0) {
             if (pfds[0].revents & POLLIN) {
@@ -206,6 +204,8 @@ int main(int argc, char *argv[]) {
                                 if (mission_idx == -1) {
                                     printf("mission start\n");
                                     mission_idx = 0;
+                                    navi_status = SEARCH_STRUCT_CROSS;
+                                    move_status = HOVER;
                                 } /*else {
                                     float x_diff = cur_vio_x - wp_vio_x;
                                     float y_diff = cur_vio_y - wp_vio_y;
@@ -264,11 +264,13 @@ int main(int argc, char *argv[]) {
                     //float t = -vert_z / vert_vz;
                     //printf("vert_struct %f %f\n", vert_x + vert_vx * t, vert_y + vert_vy * t);
                     //printf("detected_structs %f %f\n", detected_structs.vert_x, detected_structs.hori_y);
-                    if (mission_idx >= 0 && mission_idx < (sizeof(missions) / sizeof(missions[0]))) {
+                    if (mission_idx >= 0 && (unsigned int)mission_idx < (sizeof(missions) / sizeof(missions[0]))) {
                         if (navi_status == SEARCH_STRUCT_CROSS) {
                             if (detected_structs.vert_x != 0 && detected_structs.hori_x != 0) confirm_cnt++;
                             if (confirm_cnt > 2) {
-                                printf("cross detected\n");
+                                auto txt = std_msgs::msg::String();
+                                txt.data = "cross detected, mission idx " + std::to_string(mission_idx);
+                                navi_pub->publish(txt);
                                 confirm_cnt = 0;
                                 navi_status = PASS_STRUCT_CROSS;
                                 move_status = missions[mission_idx];
@@ -276,7 +278,9 @@ int main(int argc, char *argv[]) {
                         } else if (navi_status == PASS_STRUCT_CROSS) {
                             if (detected_structs.vert_x == 0 || detected_structs.hori_x == 0) confirm_cnt++;
                             if (confirm_cnt > 2) {
-                                printf("cross passed\n");
+                                auto txt = std_msgs::msg::String();
+                                txt.data = "cross passed";
+                                navi_pub->publish(txt);
                                 confirm_cnt = 0;
                                 navi_status = SEARCH_STRUCT_CROSS;
                                 if (mission_idx >= 0) mission_idx++;
@@ -284,12 +288,23 @@ int main(int argc, char *argv[]) {
                         }
                         if (move_status == MOVE_RIGHT || move_status == MOVE_LEFT) {
                             float vel_r = 0.2;
+                            float vel_d = 0;
                             if (move_status == MOVE_LEFT) vel_r = -0.2;
+                            if (detected_structs.hori_x != 0) {
+                                float t = -detected_structs.hori_y / detected_structs.hori_vy;
+                                float z = detected_structs.hori_z + detected_structs.hori_vz * t;
+                                if (z > 0.2) low_confirm_cnt++;
+                                else low_confirm_cnt = 0;
+                                if (low_confirm_cnt > 2) {
+                                    vel_d = -0.1;
+                                    low_confirm_cnt = 0;
+                                }
+                            }
                             gettimeofday(&tv, NULL);
-                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, 0, vel_r, 0, 0, 0, 0, 0, 0);
+                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, 0, vel_r, vel_d, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
-                        } else if (move_status == MOVE_RIGHT || move_status == MOVE_LEFT) {
+                        } else if (move_status == MOVE_UP || move_status == MOVE_DOWN) {
                             float vel_d = 0.2;
                             if (move_status == MOVE_UP) vel_d = -0.2;
                             gettimeofday(&tv, NULL);
@@ -370,6 +385,8 @@ int main(int argc, char *argv[]) {
     close(ipc_fd2);
     unlink(SERVER_PATH);
     unlink(SERVER_PATH2);
+
+    rclcpp::shutdown();
 
     printf("bye\n");
 
