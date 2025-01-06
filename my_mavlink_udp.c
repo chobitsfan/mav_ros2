@@ -25,6 +25,31 @@
 
 #define MAX_WP_DIST_M 8
 
+#define SEARCH_STRUCT_CROSS 1
+#define PASS_STRUCT_CROSS 2
+#define MOVE_UP 1
+#define MOVE_RIGHT 2
+#define MOVE_DOWN 3
+#define MOVE_LEFT 4
+#define LAND 5
+#define HOVER 6
+
+struct __attribute__((packed)) lines_3d {
+//where (vx, vy, vz) is a normalized vector collinear to the line and (x0, y0, z0) is a point on the line.
+    float vert_x;
+    float vert_y;
+    float vert_z;
+    float vert_vx;
+    float vert_vy;
+    float vert_vz;
+    float hori_x;
+    float hori_y;
+    float hori_z;
+    float hori_vx;
+    float hori_vy;
+    float hori_vz;
+};
+
 void sig_func(int sig) {
 }
 
@@ -45,18 +70,21 @@ int main(int argc, char *argv[]) {
     int parse_error = 0, packet_rx_drop_count = 0;
     bool att_rcved = false;
     float cur_pitch = 0;
-    int missions[][2] = { //struct type bitmask, cmd
-        {1, 1},
-        {1, 2},
-        {2, 3},
-        {1, 2},
-        {2, 1},
-        {1, 0}
+    int missions[] = {
+        MOVE_LEFT,
+        MOVE_UP,
+        MOVE_RIGHT,
+        MOVE_UP,
+        MOVE_LEFT,
+        LAND,
     };
     int mission_idx = -1;
-    int detect_cd = 0;
     float cur_vio_x = 0, cur_vio_y = 0, cur_vio_z = 0;
     float wp_vio_x = 0, wp_vio_y = 0, wp_vio_z = 0;
+    struct lines_3d detected_structs;
+    int confirm_cnt = 0;
+    int navi_status = SEARCH_STRUCT_CROSS;
+    int move_status = HOVER;
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -178,7 +206,7 @@ int main(int argc, char *argv[]) {
                                 if (mission_idx == -1) {
                                     printf("mission start\n");
                                     mission_idx = 0;
-                                } else {
+                                } /*else {
                                     float x_diff = cur_vio_x - wp_vio_x;
                                     float y_diff = cur_vio_y - wp_vio_y;
                                     float z_diff = cur_vio_z - wp_vio_z;
@@ -188,7 +216,7 @@ int main(int argc, char *argv[]) {
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
                                         write(uart_fd, buf, len);
                                     }
-                                }
+                                }*/
                             } else {
                                 mission_idx = -1;
                             }
@@ -232,9 +260,48 @@ int main(int argc, char *argv[]) {
                 }
             }
             if (pfds[2].revents & POLLIN) {
-                float rack[13] = {0};
-                if (recv(ipc_fd2, rack, sizeof(rack), 0) > 0) {
-                    printf("ok\n");
+                if (recv(ipc_fd2, &detected_structs, sizeof(detected_structs), 0) > 0) {
+                    //float t = -vert_z / vert_vz;
+                    //printf("vert_struct %f %f\n", vert_x + vert_vx * t, vert_y + vert_vy * t);
+                    //printf("detected_structs %f %f\n", detected_structs.vert_x, detected_structs.hori_y);
+                    if (mission_idx >= 0 && mission_idx < (sizeof(missions) / sizeof(missions[0]))) {
+                        if (navi_status == SEARCH_STRUCT_CROSS) {
+                            if (detected_structs.vert_x != 0 && detected_structs.hori_x != 0) confirm_cnt++;
+                            if (confirm_cnt > 2) {
+                                printf("cross detected\n");
+                                confirm_cnt = 0;
+                                navi_status = PASS_STRUCT_CROSS;
+                                move_status = missions[mission_idx];
+                            }
+                        } else if (navi_status == PASS_STRUCT_CROSS) {
+                            if (detected_structs.vert_x == 0 || detected_structs.hori_x == 0) confirm_cnt++;
+                            if (confirm_cnt > 2) {
+                                printf("cross passed\n");
+                                confirm_cnt = 0;
+                                navi_status = SEARCH_STRUCT_CROSS;
+                                if (mission_idx >= 0) mission_idx++;
+                            }
+                        }
+                        if (move_status == MOVE_RIGHT || move_status == MOVE_LEFT) {
+                            float vel_r = 0.2;
+                            if (move_status == MOVE_LEFT) vel_r = -0.2;
+                            gettimeofday(&tv, NULL);
+                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, 0, vel_r, 0, 0, 0, 0, 0, 0);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd, buf, len);
+                        } else if (move_status == MOVE_RIGHT || move_status == MOVE_LEFT) {
+                            float vel_d = 0.2;
+                            if (move_status == MOVE_UP) vel_d = -0.2;
+                            gettimeofday(&tv, NULL);
+                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, 0, 0, vel_d, 0, 0, 0, 0, 0);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd, buf, len);
+                        } else if (move_status == LAND) {
+                            mavlink_msg_set_mode_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, 9); //land
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd, buf, len);
+                        }
+                    }
                     /*--detect_cd;
                     if (mission_idx >= 0) {
                         bool no_new_cmd = true;
