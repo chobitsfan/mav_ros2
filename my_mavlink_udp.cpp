@@ -88,7 +88,7 @@ int main(int argc, char *argv[]) {
     int confirm_cnt = 0;
     int navi_status = SEARCH_STRUCT_CROSS;
     int move_status = HOVER;
-    int low_confirm_cnt = 0;
+    int low_confirm_cnt = 0, high_confirm_cnt = 0;
 
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("mavlink_udp");
@@ -293,11 +293,18 @@ int main(int argc, char *argv[]) {
                             if (detected_structs.hori_x != 0) {
                                 float t = -detected_structs.hori_y / detected_structs.hori_vy;
                                 float z = detected_structs.hori_z + detected_structs.hori_vz * t;
-                                if (z > 0.2) low_confirm_cnt++;
-                                else low_confirm_cnt = 0;
+                                if (z > 0.2) low_confirm_cnt++; else low_confirm_cnt = 0;
+                                if (z < -0.2) high_confirm_cnt++; else high_confirm_cnt = 0;
                                 if (low_confirm_cnt > 2) {
                                     vel_d = -0.1;
-                                    low_confirm_cnt = 0;
+                                    auto txt = std_msgs::msg::String();
+                                    txt.data = "too low, move up";
+                                    navi_pub->publish(txt);
+                                } else if (high_confirm_cnt > 2) {
+                                    vel_d = 0.1;
+                                    auto txt = std_msgs::msg::String();
+                                    txt.data = "too high, move down";
+                                    navi_pub->publish(txt);
                                 }
                             }
                             gettimeofday(&tv, NULL);
