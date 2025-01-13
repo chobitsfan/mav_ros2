@@ -38,6 +38,9 @@
 #define LAND 5
 #define HOVER 6
 
+#define CLOSE_DIST_M 0.5
+#define FAR_DIST_M 0.9
+
 struct __attribute__((packed)) lines_3d {
 //where (vx, vy, vz) is a normalized vector collinear to the line and (x0, y0, z0) is a point on the line.
     float vert_x;
@@ -73,8 +76,8 @@ int main(int argc, char *argv[]) {
     uint8_t mav_sysid = 0;
     int ipc_fd, ipc_fd2;
     int parse_error = 0, packet_rx_drop_count = 0;
-    bool att_rcved = false;
-    float cur_pitch = 0;
+    //bool att_rcved = false;
+    //float cur_pitch = 0;
     int missions[] = {
         MOVE_LEFT,
         MOVE_UP,
@@ -99,6 +102,8 @@ int main(int argc, char *argv[]) {
     int close_confirm_cnt = 0;
     int far_confirm_cnt = 0;
     int align_confirm_cnt = 0;
+    int right_confirm_cnt = 0;
+    int left_confirm_cnt = 0;
 
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("mavlink_udp");
@@ -232,21 +237,21 @@ int main(int argc, char *argv[]) {
                             } else {
                                 mission_idx = -1;
                             }
-                            if (!att_rcved) {
+                            /*if (!att_rcved) {
                                 mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_ATTITUDE, 100000, 0, 0, 0, 0, 0);
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd, buf, len);
-                            }
+                            }*/
                         } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
                             mavlink_statustext_t txt;
                             mavlink_msg_statustext_decode(&msg, &txt);
                             printf("fc: %s\n", txt.text);
-                        } else if (msg.msgid == MAVLINK_MSG_ID_ATTITUDE) {
+                        } /*else if (msg.msgid == MAVLINK_MSG_ID_ATTITUDE) {
                             att_rcved = true;
                             mavlink_attitude_t att;
                             mavlink_msg_attitude_decode(&msg, &att);
                             cur_pitch = att.pitch;
-                        }
+                        }*/
                     }
                 }
             }
@@ -325,8 +330,8 @@ int main(int argc, char *argv[]) {
                                 float x = detected_structs.hori_x + detected_structs.hori_vx * t;
                                 if (z > 0.2) low_confirm_cnt++; else low_confirm_cnt = 0;
                                 if (z < -0.2) high_confirm_cnt++; else high_confirm_cnt = 0;
-                                if (x < 0.5) close_confirm_cnt++; else close_confirm_cnt = 0;
-                                if (x > 0.9) far_confirm_cnt++; else far_confirm_cnt = 0;
+                                if (x < CLOSE_DIST_M) close_confirm_cnt++; else close_confirm_cnt = 0;
+                                if (x > FAR_DIST_M) far_confirm_cnt++; else far_confirm_cnt = 0;
                                 if (low_confirm_cnt > 2) {
                                     vel_d = -0.1;
                                     auto txt = std_msgs::msg::String();
@@ -383,13 +388,17 @@ int main(int argc, char *argv[]) {
                             }
                         } else if (move_status == MOVE_UP || move_status == MOVE_DOWN) {
                             float vel_f = 0;
+                            float vel_r = 0;
                             float vel_d = 0.2;
                             if (move_status == MOVE_UP) vel_d = -0.2;
                             if (detected_structs.vert_x != 0) {
                                 float t = -detected_structs.vert_z / detected_structs.vert_vz;
                                 float x = detected_structs.vert_x + detected_structs.vert_vx * t;
-                                if (x < 0.5) close_confirm_cnt++; else close_confirm_cnt = 0;
-                                if (x > 0.9) far_confirm_cnt++; else far_confirm_cnt = 0;
+                                float y = detected_structs.vert_y + detected_structs.vert_vy * t;
+                                if (x < CLOSE_DIST_M) close_confirm_cnt++; else close_confirm_cnt = 0;
+                                if (x > FAR_DIST_M) far_confirm_cnt++; else far_confirm_cnt = 0;
+                                if (y > 0.2) left_confirm_cnt++; else left_confirm_cnt = 0;
+                                if (y< -0.2) right_confirm_cnt++; else right_confirm_cnt = 0;
                                 if (close_confirm_cnt > 2) {
                                     vel_f = -0.1;
                                     auto txt = std_msgs::msg::String();
@@ -401,9 +410,20 @@ int main(int argc, char *argv[]) {
                                     txt.data = "too far, move close";
                                     navi_pub->publish(txt);
                                 }
+                                if (left_confirm_cnt > 2) {
+                                    vel_r = -0.1;
+                                    auto txt = std_msgs::msg::String();
+                                    txt.data = "too left, move right";
+                                    navi_pub->publish(txt);
+                                } else if (right_confirm_cnt > 2) {
+                                    vel_r = 0.1;
+                                    auto txt = std_msgs::msg::String();
+                                    txt.data = "too right, move left";
+                                    navi_pub->publish(txt);
+                                }
                             }
                             gettimeofday(&tv, NULL);
-                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, vel_f, 0, vel_d, 0, 0, 0, 0, 0);
+                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, vel_f, vel_r, vel_d, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
                         } else if (move_status == LAND) {
