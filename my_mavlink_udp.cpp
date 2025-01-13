@@ -19,6 +19,7 @@
 #include "mavlink/ardupilotmega/mavlink.h"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "visualization_msgs/msg/marker.hpp"
 
 // ROS coordinate system, x axis = vehicle front
 
@@ -79,21 +80,29 @@ int main(int argc, char *argv[]) {
     //bool att_rcved = false;
     //float cur_pitch = 0;
     int missions[] = {
-        MOVE_LEFT,
         MOVE_UP,
         MOVE_LEFT,
         MOVE_DOWN,
-        MOVE_RIGHT,
+        MOVE_LEFT,
         MOVE_UP,
         MOVE_RIGHT,
         MOVE_DOWN,
+        MOVE_RIGHT,
+        MOVE_UP,
         MOVE_LEFT,
+        MOVE_DOWN,
+        MOVE_LEFT,
+        MOVE_UP,
+        MOVE_RIGHT,
+        MOVE_DOWN,
+        MOVE_RIGHT,
         LAND,
     };
     int mission_idx = -1;
     float cur_vio_x = 0, cur_vio_y = 0, cur_vio_z = 0;
     float wp_vio_x = 0, wp_vio_y = 0, wp_vio_z = 0;
     struct lines_3d detected_structs;
+    struct lines_3d last_detected_structs;
     int confirm_cnt = 0;
     int navi_status = SEARCH_STRUCT_CROSS;
     int move_status = HOVER;
@@ -104,10 +113,29 @@ int main(int argc, char *argv[]) {
     int align_confirm_cnt = 0;
     int right_confirm_cnt = 0;
     int left_confirm_cnt = 0;
+    int yaw_adj_cd = 0;
+    int vert_lost_cnt = 0;
+    int hori_lost_cnt = 0;
+    visualization_msgs::msg::Marker line_list;
+
+    line_list.header.frame_id = "body";
+    line_list.type = visualization_msgs::msg::Marker::LINE_LIST;
+    line_list.action = visualization_msgs::msg::Marker::ADD;
+    line_list.pose.orientation.w = 1.0;
+    line_list.ns = "last_struct";
+    line_list.id = 1;
+    line_list.scale.x = 0.02;
+    line_list.color.r = 1.0;
+    line_list.color.g = 1.0;
+    line_list.color.b = 1.0;
+    line_list.color.a = 1.0;
+
+    memset(&last_detected_structs, 0, sizeof(last_detected_structs));
 
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("mavlink_udp");
     auto navi_pub = node->create_publisher<std_msgs::msg::String>("navi", 1);
+    auto vis_pub = node->create_publisher<visualization_msgs::msg::Marker>("struct_lines", 1);
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -278,9 +306,6 @@ int main(int argc, char *argv[]) {
             }
             if (pfds[2].revents & POLLIN) {
                 if (recv(ipc_fd2, &detected_structs, sizeof(detected_structs), 0) > 0) {
-                    //float t = -vert_z / vert_vz;
-                    //printf("vert_struct %f %f\n", vert_x + vert_vx * t, vert_y + vert_vy * t);
-                    //printf("detected_structs %f %f\n", detected_structs.vert_x, detected_structs.hori_y);
                     /*if (detected_structs.hori_x != 0) {
                         float vx, vy;
                         if (detected_structs.hori_vy < 0) {
@@ -297,6 +322,7 @@ int main(int argc, char *argv[]) {
                             printf("angle_y_hori %f %f\n", angle_y_hori, vx);
                         }
                     }*/
+                    if (yaw_adj_cd > 0) yaw_adj_cd--;
                     if (mission_idx >= 0 && (unsigned int)mission_idx < (sizeof(missions) / sizeof(missions[0]))) {
                         if (navi_status == SEARCH_STRUCT_CROSS) {
                             if (detected_structs.vert_x != 0 && detected_structs.hori_x != 0) confirm_cnt++;
@@ -324,7 +350,38 @@ int main(int argc, char *argv[]) {
                             float vel_d = 0;
                             float vel_f = 0;
                             if (move_status == MOVE_LEFT) vel_r = -0.2;
-                            if (detected_structs.hori_x != 0) {
+                            if (detected_structs.hori_x == 0) {
+                                hori_lost_cnt++;
+                                if (hori_lost_cnt > 2) {
+                                    float t = -last_detected_structs.hori_y / last_detected_structs.hori_vy;
+                                    float z = last_detected_structs.hori_z + last_detected_structs.hori_vz * t;
+                                    if (z > 0) {
+                                        vel_d = -0.1;
+                                        auto txt = std_msgs::msg::String();
+                                        txt.data = "lost horizontal struct, move up";
+                                        navi_pub->publish(txt);
+                                    } else {
+                                        vel_d = 0.1;
+                                        auto txt = std_msgs::msg::String();
+                                        txt.data = "lost horizontal struct, move down";
+                                        navi_pub->publish(txt);
+                                    }
+                                    line_list.header.stamp = node->get_clock()->now();
+                                    line_list.id = 2;
+                                    line_list.points.clear();
+                                    geometry_msgs::msg::Point p;
+                                    p.x = last_detected_structs.hori_x + last_detected_structs.hori_vx;
+                                    p.y = last_detected_structs.hori_y + last_detected_structs.hori_vy;
+                                    p.z = last_detected_structs.hori_z + last_detected_structs.hori_vz;
+                                    line_list.points.push_back(p);
+                                    p.x = last_detected_structs.hori_x - last_detected_structs.hori_vx;
+                                    p.y = last_detected_structs.hori_y - last_detected_structs.hori_vy;
+                                    p.z = last_detected_structs.hori_z - last_detected_structs.hori_vz;
+                                    line_list.points.push_back(p);
+                                    vis_pub->publish(line_list);
+                                }
+                            } else {
+                                hori_lost_cnt = 0;
                                 float t = -detected_structs.hori_y / detected_structs.hori_vy;
                                 float z = detected_structs.hori_z + detected_structs.hori_vz * t;
                                 float x = detected_structs.hori_x + detected_structs.hori_vx * t;
@@ -372,13 +429,14 @@ int main(int argc, char *argv[]) {
                                 }
                                 float angle_y_hori = acosf(vy);
                                 if (angle_y_hori > 0.15) align_confirm_cnt++; else align_confirm_cnt = 0;
-                                if (align_confirm_cnt > 2) {
+                                if (align_confirm_cnt > 2 && yaw_adj_cd == 0) {
+                                    yaw_adj_cd = 7;
                                     align_confirm_cnt = 0;
                                     //printf("angle_y_hori %f %f\n", angle_y_hori, vx);
                                     int dir = 1;
                                     float deg = angle_y_hori * 180 / M_PI;
                                     if (vx > 0) dir = 1; else dir = -1;
-                                    mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_CONDITION_YAW, 0, deg, 5, dir, 1, 0, 0, 0);
+                                    mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_CONDITION_YAW, 0, deg, 10, dir, 1, 0, 0, 0);
                                     len = mavlink_msg_to_send_buffer(buf, &msg);
                                     write(uart_fd, buf, len);
                                     auto txt = std_msgs::msg::String();
@@ -391,7 +449,38 @@ int main(int argc, char *argv[]) {
                             float vel_r = 0;
                             float vel_d = 0.2;
                             if (move_status == MOVE_UP) vel_d = -0.2;
-                            if (detected_structs.vert_x != 0) {
+                            if (detected_structs.vert_x == 0) {
+                                vert_lost_cnt++;
+                                if (vert_lost_cnt > 2) {
+                                    float t = -last_detected_structs.vert_z / last_detected_structs.vert_vz;
+                                    float y = last_detected_structs.vert_y + last_detected_structs.vert_vy * t;
+                                    if (y > 0) {
+                                        vel_r = -0.1;
+                                        auto txt = std_msgs::msg::String();
+                                        txt.data = "lost vertical struct, move left";
+                                        navi_pub->publish(txt);
+                                    } else {
+                                        vel_r = 0.1;
+                                        auto txt = std_msgs::msg::String();
+                                        txt.data = "lost vertical struct, move right";
+                                        navi_pub->publish(txt);
+                                    }
+                                    line_list.header.stamp = node->get_clock()->now();
+                                    line_list.id = 1;
+                                    line_list.points.clear();
+                                    geometry_msgs::msg::Point p;
+                                    p.x = last_detected_structs.vert_x + last_detected_structs.vert_vx;
+                                    p.y = last_detected_structs.vert_y + last_detected_structs.vert_vy;
+                                    p.z = last_detected_structs.vert_z + last_detected_structs.vert_vz;
+                                    line_list.points.push_back(p);
+                                    p.x = last_detected_structs.vert_x - last_detected_structs.vert_vx;
+                                    p.y = last_detected_structs.vert_y - last_detected_structs.vert_vy;
+                                    p.z = last_detected_structs.vert_z - last_detected_structs.vert_vz;
+                                    line_list.points.push_back(p);
+                                    vis_pub->publish(line_list);
+                                }
+                            } else {
+                                vert_lost_cnt = 0;
                                 float t = -detected_structs.vert_z / detected_structs.vert_vz;
                                 float x = detected_structs.vert_x + detected_structs.vert_vx * t;
                                 float y = detected_structs.vert_y + detected_structs.vert_vy * t;
@@ -413,12 +502,12 @@ int main(int argc, char *argv[]) {
                                 if (left_confirm_cnt > 2) {
                                     vel_r = -0.1;
                                     auto txt = std_msgs::msg::String();
-                                    txt.data = "too left, move right";
+                                    txt.data = "too right, move left";
                                     navi_pub->publish(txt);
                                 } else if (right_confirm_cnt > 2) {
                                     vel_r = 0.1;
                                     auto txt = std_msgs::msg::String();
-                                    txt.data = "too right, move left";
+                                    txt.data = "too left, move right";
                                     navi_pub->publish(txt);
                                 }
                             }
@@ -432,64 +521,22 @@ int main(int argc, char *argv[]) {
                             write(uart_fd, buf, len);
                         }
                     }
-                    /*--detect_cd;
-                    if (mission_idx >= 0) {
-                        bool no_new_cmd = true;
-                        if (detect_cd < 0) {
-                            int struct_detect = rack[0];
-                            int* mission = missions[mission_idx];
-                            int struct_expect = mission[0];
-                            if (struct_expect & struct_detect ) {
-                                float vel_r = 0, vel_d = 0;
-                                int cmd = mission[1];
-                                if (cmd == 1) {
-                                    vel_r = -0.2;
-                                } else if (cmd == 2) {
-                                    vel_d = -0.2;
-                                } else if (cmd == 3) {
-                                    vel_r = 0.2;
-                                } else if (cmd == 4) {
-                                    vel_d = 0.2;
-                                }
-                                gettimeofday(&tv, NULL);
-                                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, 0, vel_r, vel_d, 0, 0, 0, 0, 0);
-                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                write(uart_fd, buf, len);
-
-                                if (cmd > 0) {
-                                    ++mission_idx;
-                                    printf("mission idx: %d\n", mission_idx);
-                                    wp_vio_x = cur_vio_x;
-                                    wp_vio_y = cur_vio_y;
-                                    wp_vio_z = cur_vio_z;
-                                }
-                                detect_cd = 40;
-                                no_new_cmd = false;
-                            }
-                        }
-                        if (no_new_cmd && mission_idx > 0) {
-                            int dist_mm = rack[1];
-                            if (dist_mm == 10000) {
-                            } else {
-                                float vel_f = 0, vel_r = 0, vel_d = 0;
-                                int cmd = missions[mission_idx-1][1];
-                                if (cmd == 1) {
-                                    vel_r = -0.2;
-                                } else if (cmd == 2) {
-                                    vel_d = -0.2;
-                                } else if (cmd == 3) {
-                                    vel_r = 0.2;
-                                } else if (cmd == 4) {
-                                    vel_d = 0.2;
-                                }
-                                if (dist_mm < 500) vel_f = -0.1; else if (dist_mm > 900) vel_f = 0.1;
-                                gettimeofday(&tv, NULL);
-                                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, vel_f, vel_r, vel_d, 0, 0, 0, 0, 0);
-                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                write(uart_fd, buf, len);
-                            }
-                        }
-                    }*/
+                    if (detected_structs.vert_x != 0) {
+                        last_detected_structs.vert_x = detected_structs.vert_x;
+                        last_detected_structs.vert_y = detected_structs.vert_y;
+                        last_detected_structs.vert_z = detected_structs.vert_z;
+                        last_detected_structs.vert_vx = detected_structs.vert_vx;
+                        last_detected_structs.vert_vy = detected_structs.vert_vy;
+                        last_detected_structs.vert_vz = detected_structs.vert_vz;
+                    }
+                    if (detected_structs.hori_x != 0) {
+                        last_detected_structs.hori_x = detected_structs.hori_x;
+                        last_detected_structs.hori_y = detected_structs.hori_y;
+                        last_detected_structs.hori_z = detected_structs.hori_z;
+                        last_detected_structs.hori_vx = detected_structs.hori_vx;
+                        last_detected_structs.hori_vy = detected_structs.hori_vy;
+                        last_detected_structs.hori_vz = detected_structs.hori_vz;
+                    }
                 }
             }
         } else break;
