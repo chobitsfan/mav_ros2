@@ -20,6 +20,8 @@
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
 
+// ROS coordinate system, x axis = vehicle front
+
 #define MY_COMP_ID 191
 #define MY_NUM_PFDS 3
 #define SERVER_PATH "/tmp/chobits_server"
@@ -51,6 +53,10 @@ struct __attribute__((packed)) lines_3d {
     float hori_vy;
     float hori_vz;
 };
+
+float angle_between_vectors(float v1x, float v1y, float v1z, float v2x, float v2y, float v2z) {
+    return acosf((v1x * v2x + v1y * v2y + v1z * v2z) / (sqrtf(v1x * v1x + v1y * v1y + v1z * v1z) * sqrtf(v2x * v2x + v2y * v2y + v2z * v2z)));
+}
 
 int main(int argc, char *argv[]) {
     struct pollfd pfds[MY_NUM_PFDS];
@@ -92,6 +98,7 @@ int main(int argc, char *argv[]) {
     int high_confirm_cnt = 0;
     int close_confirm_cnt = 0;
     int far_confirm_cnt = 0;
+    int align_confirm_cnt = 0;
 
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("mavlink_udp");
@@ -205,7 +212,9 @@ int main(int argc, char *argv[]) {
                             }
                             if (hb.custom_mode == COPTER_MODE_GUIDED) {
                                 if (mission_idx == -1) {
-                                    printf("mission start\n");
+                                    auto txt = std_msgs::msg::String();
+                                    txt.data = "mission start";
+                                    navi_pub->publish(txt);
                                     mission_idx = 0;
                                     navi_status = SEARCH_STRUCT_CROSS;
                                     move_status = HOVER;
@@ -267,6 +276,22 @@ int main(int argc, char *argv[]) {
                     //float t = -vert_z / vert_vz;
                     //printf("vert_struct %f %f\n", vert_x + vert_vx * t, vert_y + vert_vy * t);
                     //printf("detected_structs %f %f\n", detected_structs.vert_x, detected_structs.hori_y);
+                    /*if (detected_structs.hori_x != 0) {
+                        float vx, vy;
+                        if (detected_structs.hori_vy < 0) {
+                            vx = -detected_structs.hori_vx;
+                            vy = -detected_structs.hori_vy;
+                        } else {
+                            vx = detected_structs.hori_vx;
+                            vy = detected_structs.hori_vy;
+                        }
+                        float angle_y_hori = acosf(vy);
+                        if (angle_y_hori > 0.15) align_confirm_cnt++; else align_confirm_cnt = 0;
+                        if (align_confirm_cnt > 2) {
+                            align_confirm_cnt = 0;
+                            printf("angle_y_hori %f %f\n", angle_y_hori, vx);
+                        }
+                    }*/
                     if (mission_idx >= 0 && (unsigned int)mission_idx < (sizeof(missions) / sizeof(missions[0]))) {
                         if (navi_status == SEARCH_STRUCT_CROSS) {
                             if (detected_structs.vert_x != 0 && detected_structs.hori_x != 0) confirm_cnt++;
@@ -329,6 +354,33 @@ int main(int argc, char *argv[]) {
                             mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, vel_f, vel_r, vel_d, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
+
+                            // adjust heading
+                            if (detected_structs.hori_x != 0) {
+                                float vx, vy;
+                                if (detected_structs.hori_vy < 0) {
+                                    vx = -detected_structs.hori_vx;
+                                    vy = -detected_structs.hori_vy;
+                                } else {
+                                    vx = detected_structs.hori_vx;
+                                    vy = detected_structs.hori_vy;
+                                }
+                                float angle_y_hori = acosf(vy);
+                                if (angle_y_hori > 0.15) align_confirm_cnt++; else align_confirm_cnt = 0;
+                                if (align_confirm_cnt > 2) {
+                                    align_confirm_cnt = 0;
+                                    //printf("angle_y_hori %f %f\n", angle_y_hori, vx);
+                                    int dir = 1;
+                                    float deg = angle_y_hori * 180 / M_PI;
+                                    if (vx > 0) dir = 1; else dir = -1;
+                                    mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_CONDITION_YAW, 0, deg, 5, dir, 1, 0, 0, 0);
+                                    len = mavlink_msg_to_send_buffer(buf, &msg);
+                                    write(uart_fd, buf, len);
+                                    auto txt = std_msgs::msg::String();
+                                    txt.data = "adjust heading " + (dir > 0 ? std::string("cw ") : std::string("ccw ")) + std::to_string(deg);
+                                    navi_pub->publish(txt);
+                                }
+                            }
                         } else if (move_status == MOVE_UP || move_status == MOVE_DOWN) {
                             float vel_f = 0;
                             float vel_d = 0.2;
