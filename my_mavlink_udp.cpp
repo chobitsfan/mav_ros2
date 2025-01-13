@@ -72,9 +72,9 @@ int main(int argc, char *argv[]) {
     int missions[] = {
         MOVE_LEFT,
         MOVE_UP,
-        MOVE_RIGHT,
-        MOVE_DOWN,
         MOVE_LEFT,
+        MOVE_DOWN,
+        MOVE_RIGHT,
         MOVE_UP,
         MOVE_RIGHT,
         MOVE_DOWN,
@@ -88,7 +88,10 @@ int main(int argc, char *argv[]) {
     int confirm_cnt = 0;
     int navi_status = SEARCH_STRUCT_CROSS;
     int move_status = HOVER;
-    int low_confirm_cnt = 0, high_confirm_cnt = 0;
+    int low_confirm_cnt = 0;
+    int high_confirm_cnt = 0;
+    int close_confirm_cnt = 0;
+    int far_confirm_cnt = 0;
 
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("mavlink_udp");
@@ -289,12 +292,16 @@ int main(int argc, char *argv[]) {
                         if (move_status == MOVE_RIGHT || move_status == MOVE_LEFT) {
                             float vel_r = 0.2;
                             float vel_d = 0;
+                            float vel_f = 0;
                             if (move_status == MOVE_LEFT) vel_r = -0.2;
                             if (detected_structs.hori_x != 0) {
                                 float t = -detected_structs.hori_y / detected_structs.hori_vy;
                                 float z = detected_structs.hori_z + detected_structs.hori_vz * t;
+                                float x = detected_structs.hori_x + detected_structs.hori_vx * t;
                                 if (z > 0.2) low_confirm_cnt++; else low_confirm_cnt = 0;
                                 if (z < -0.2) high_confirm_cnt++; else high_confirm_cnt = 0;
+                                if (x < 0.5) close_confirm_cnt++; else close_confirm_cnt = 0;
+                                if (x > 0.9) far_confirm_cnt++; else far_confirm_cnt = 0;
                                 if (low_confirm_cnt > 2) {
                                     vel_d = -0.1;
                                     auto txt = std_msgs::msg::String();
@@ -306,16 +313,45 @@ int main(int argc, char *argv[]) {
                                     txt.data = "too high, move down";
                                     navi_pub->publish(txt);
                                 }
+                                if (close_confirm_cnt > 2) {
+                                    vel_f = -0.1;
+                                    auto txt = std_msgs::msg::String();
+                                    txt.data = "too close, move away";
+                                    navi_pub->publish(txt);
+                                } else if (far_confirm_cnt > 2) {
+                                    vel_f = 0.1;
+                                    auto txt = std_msgs::msg::String();
+                                    txt.data = "too far, move close";
+                                    navi_pub->publish(txt);
+                                }
                             }
                             gettimeofday(&tv, NULL);
-                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, 0, vel_r, vel_d, 0, 0, 0, 0, 0);
+                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, vel_f, vel_r, vel_d, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
                         } else if (move_status == MOVE_UP || move_status == MOVE_DOWN) {
+                            float vel_f = 0;
                             float vel_d = 0.2;
                             if (move_status == MOVE_UP) vel_d = -0.2;
+                            if (detected_structs.vert_x != 0) {
+                                float t = -detected_structs.vert_z / detected_structs.vert_vz;
+                                float x = detected_structs.vert_x + detected_structs.vert_vx * t;
+                                if (x < 0.5) close_confirm_cnt++; else close_confirm_cnt = 0;
+                                if (x > 0.9) far_confirm_cnt++; else far_confirm_cnt = 0;
+                                if (close_confirm_cnt > 2) {
+                                    vel_f = -0.1;
+                                    auto txt = std_msgs::msg::String();
+                                    txt.data = "too close, move away";
+                                    navi_pub->publish(txt);
+                                } else if (far_confirm_cnt > 2) {
+                                    vel_f = 0.1;
+                                    auto txt = std_msgs::msg::String();
+                                    txt.data = "too far, move close";
+                                    navi_pub->publish(txt);
+                                }
+                            }
                             gettimeofday(&tv, NULL);
-                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, 0, 0, vel_d, 0, 0, 0, 0, 0);
+                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, vel_f, 0, vel_d, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
                         } else if (move_status == LAND) {
