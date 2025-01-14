@@ -126,13 +126,13 @@ int main(int argc, char *argv[]) {
     int hori_lost_cnt = 0;
     float tgt_yaw = 0;
     unsigned int adj_cnt = 0;
+    unsigned int cross_id = 0;
 
     visualization_msgs::msg::Marker line_list;
     line_list.header.frame_id = "body";
     line_list.type = visualization_msgs::msg::Marker::LINE_LIST;
     line_list.action = visualization_msgs::msg::Marker::ADD;
     line_list.pose.orientation.w = 1.0;
-    line_list.ns = "last_struct";
     line_list.id = 1;
     line_list.scale.x = 0.02;
     line_list.color.r = 1.0;
@@ -343,6 +343,31 @@ int main(int argc, char *argv[]) {
                                 confirm_cnt = 0;
                                 navi_status = PASS_STRUCT_CROSS;
                                 move_status = missions[mission_idx];
+
+                                line_list.header.stamp = node->get_clock()->now();
+                                cross_id++;
+                                line_list.id = cross_id;
+                                line_list.ns = "cross";
+                                line_list.color.r = line_list.color.g = line_list.color.b = 0.5;
+                                line_list.points.clear();
+                                geometry_msgs::msg::Point p;
+                                p.x = detected_structs.hori_x + detected_structs.hori_vx;
+                                p.y = detected_structs.hori_y + detected_structs.hori_vy;
+                                p.z = detected_structs.hori_z + detected_structs.hori_vz;
+                                line_list.points.push_back(p);
+                                p.x = detected_structs.hori_x - detected_structs.hori_vx;
+                                p.y = detected_structs.hori_y - detected_structs.hori_vy;
+                                p.z = detected_structs.hori_z - detected_structs.hori_vz;
+                                line_list.points.push_back(p);
+                                p.x = detected_structs.vert_x + detected_structs.vert_vx;
+                                p.y = detected_structs.vert_y + detected_structs.vert_vy;
+                                p.z = detected_structs.vert_z + detected_structs.vert_vz;
+                                line_list.points.push_back(p);
+                                p.x = detected_structs.vert_x - detected_structs.vert_vx;
+                                p.y = detected_structs.vert_y - detected_structs.vert_vy;
+                                p.z = detected_structs.vert_z - detected_structs.vert_vz;
+                                line_list.points.push_back(p);
+                                vis_pub->publish(line_list);
                             }
                         } else if (navi_status == PASS_STRUCT_CROSS) {
                             if (detected_structs.vert_x == 0 || detected_structs.hori_x == 0) confirm_cnt++;
@@ -378,7 +403,8 @@ int main(int argc, char *argv[]) {
                                         navi_pub->publish(txt);
                                     }
                                     line_list.header.stamp = node->get_clock()->now();
-                                    line_list.id = 2;
+                                    line_list.ns = "hori_struct";
+                                    line_list.color.r = line_list.color.g = line_list.color.b = 1.0;
                                     line_list.points.clear();
                                     geometry_msgs::msg::Point p;
                                     p.x = last_detected_structs.hori_x + last_detected_structs.hori_vx;
@@ -479,7 +505,8 @@ int main(int argc, char *argv[]) {
                                         navi_pub->publish(txt);
                                     }
                                     line_list.header.stamp = node->get_clock()->now();
-                                    line_list.id = 1;
+                                    line_list.color.r = line_list.color.g = line_list.color.b = 1.0;
+                                    line_list.ns = "vert_struct";
                                     line_list.points.clear();
                                     geometry_msgs::msg::Point p;
                                     p.x = last_detected_structs.vert_x + last_detected_structs.vert_vx;
