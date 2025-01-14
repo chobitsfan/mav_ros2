@@ -96,6 +96,14 @@ int main(int argc, char *argv[]) {
         MOVE_RIGHT,
         MOVE_DOWN,
         MOVE_RIGHT,
+        MOVE_UP,
+        MOVE_LEFT,
+        MOVE_DOWN,
+        MOVE_LEFT,
+        MOVE_UP,
+        MOVE_RIGHT,
+        MOVE_DOWN,
+        MOVE_RIGHT,
         LAND,
     };
     int mission_idx = -1;
@@ -117,8 +125,9 @@ int main(int argc, char *argv[]) {
     int vert_lost_cnt = 0;
     int hori_lost_cnt = 0;
     float tgt_yaw = 0;
-    visualization_msgs::msg::Marker line_list;
+    unsigned int adj_cnt = 0;
 
+    visualization_msgs::msg::Marker line_list;
     line_list.header.frame_id = "body";
     line_list.type = visualization_msgs::msg::Marker::LINE_LIST;
     line_list.action = visualization_msgs::msg::Marker::ADD;
@@ -392,26 +401,35 @@ int main(int argc, char *argv[]) {
                                 if (x < CLOSE_DIST_M) close_confirm_cnt++; else close_confirm_cnt = 0;
                                 if (x > FAR_DIST_M) far_confirm_cnt++; else far_confirm_cnt = 0;
                                 if (low_confirm_cnt > 2) {
+                                    adj_cnt++;
                                     vel_d = -0.1;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too low, move up";
                                     navi_pub->publish(txt);
                                 } else if (high_confirm_cnt > 2) {
+                                    adj_cnt++;
                                     vel_d = 0.1;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too high, move down";
                                     navi_pub->publish(txt);
                                 }
                                 if (close_confirm_cnt > 2) {
+                                    adj_cnt++;
                                     vel_f = -0.1;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too close, move away";
                                     navi_pub->publish(txt);
                                 } else if (far_confirm_cnt > 2) {
+                                    adj_cnt++;
                                     vel_f = 0.1;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too far, move close";
                                     navi_pub->publish(txt);
+                                }
+                                if (adj_cnt > 5) {
+                                    adj_cnt = 0;
+                                    vel_f = 0;
+                                    vel_d = 0;
                                 }
 
                                 float vx, vy;
@@ -485,25 +503,34 @@ int main(int argc, char *argv[]) {
                                 if (y< -0.2) right_confirm_cnt++; else right_confirm_cnt = 0;
                                 if (close_confirm_cnt > 2) {
                                     vel_f = -0.1;
+                                    adj_cnt++;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too close, move away";
                                     navi_pub->publish(txt);
                                 } else if (far_confirm_cnt > 2) {
                                     vel_f = 0.1;
+                                    adj_cnt++;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too far, move close";
                                     navi_pub->publish(txt);
                                 }
                                 if (left_confirm_cnt > 2) {
                                     vel_r = -0.1;
+                                    adj_cnt++;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too right, move left";
                                     navi_pub->publish(txt);
                                 } else if (right_confirm_cnt > 2) {
                                     vel_r = 0.1;
+                                    adj_cnt++;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too left, move right";
                                     navi_pub->publish(txt);
+                                }
+                                if (adj_cnt > 5) {
+                                    adj_cnt = 0;
+                                    vel_f = 0;
+                                    vel_r = 0;
                                 }
                             }
                             gettimeofday(&tv, NULL);
