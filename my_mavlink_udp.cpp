@@ -77,8 +77,8 @@ int main(int argc, char *argv[]) {
     uint8_t mav_sysid = 0;
     int ipc_fd, ipc_fd2;
     int parse_error = 0, packet_rx_drop_count = 0;
-    //bool att_rcved = false;
-    //float cur_pitch = 0;
+    bool att_rcved = false;
+    float cur_yaw = 0;
     int missions[] = {
         MOVE_UP,
         MOVE_LEFT,
@@ -116,6 +116,7 @@ int main(int argc, char *argv[]) {
     int yaw_adj_cd = 0;
     int vert_lost_cnt = 0;
     int hori_lost_cnt = 0;
+    float tgt_yaw = 0;
     visualization_msgs::msg::Marker line_list;
 
     line_list.header.frame_id = "body";
@@ -265,21 +266,21 @@ int main(int argc, char *argv[]) {
                             } else {
                                 mission_idx = -1;
                             }
-                            /*if (!att_rcved) {
+                            if (!att_rcved) {
                                 mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_ATTITUDE, 100000, 0, 0, 0, 0, 0);
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd, buf, len);
-                            }*/
+                            }
                         } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
                             mavlink_statustext_t txt;
                             mavlink_msg_statustext_decode(&msg, &txt);
                             printf("fc: %s\n", txt.text);
-                        } /*else if (msg.msgid == MAVLINK_MSG_ID_ATTITUDE) {
+                        } else if (msg.msgid == MAVLINK_MSG_ID_ATTITUDE) {
                             att_rcved = true;
                             mavlink_attitude_t att;
                             mavlink_msg_attitude_decode(&msg, &att);
-                            cur_pitch = att.pitch;
-                        }*/
+                            cur_yaw = att.yaw;
+                        }
                     }
                 }
             }
@@ -349,6 +350,7 @@ int main(int argc, char *argv[]) {
                             float vel_r = 0.2;
                             float vel_d = 0;
                             float vel_f = 0;
+                            uint16_t type_mask = 0xdc7;
                             if (move_status == MOVE_LEFT) vel_r = -0.2;
                             if (detected_structs.hori_x == 0) {
                                 hori_lost_cnt++;
@@ -411,14 +413,7 @@ int main(int argc, char *argv[]) {
                                     txt.data = "too far, move close";
                                     navi_pub->publish(txt);
                                 }
-                            }
-                            gettimeofday(&tv, NULL);
-                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, vel_f, vel_r, vel_d, 0, 0, 0, 0, 0);
-                            len = mavlink_msg_to_send_buffer(buf, &msg);
-                            write(uart_fd, buf, len);
 
-                            // adjust heading
-                            if (detected_structs.hori_x != 0) {
                                 float vx, vy;
                                 if (detected_structs.hori_vy < 0) {
                                     vx = -detected_structs.hori_vx;
@@ -430,20 +425,20 @@ int main(int argc, char *argv[]) {
                                 float angle_y_hori = acosf(vy);
                                 if (angle_y_hori > 0.15) align_confirm_cnt++; else align_confirm_cnt = 0;
                                 if (align_confirm_cnt > 2 && yaw_adj_cd == 0) {
-                                    yaw_adj_cd = 7;
+                                    yaw_adj_cd = 10;
                                     align_confirm_cnt = 0;
                                     //printf("angle_y_hori %f %f\n", angle_y_hori, vx);
-                                    int dir = 1;
-                                    float deg = angle_y_hori * 180 / M_PI;
-                                    if (vx > 0) dir = 1; else dir = -1;
-                                    mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_CONDITION_YAW, 0, deg, 10, dir, 1, 0, 0, 0);
-                                    len = mavlink_msg_to_send_buffer(buf, &msg);
-                                    write(uart_fd, buf, len);
+                                    if (vx > 0) tgt_yaw = cur_yaw + angle_y_hori; else tgt_yaw = cur_yaw - angle_y_hori;
                                     auto txt = std_msgs::msg::String();
-                                    txt.data = "adjust heading " + (dir > 0 ? std::string("cw ") : std::string("ccw ")) + std::to_string(deg);
+                                    txt.data = "adjust heading " + (vx > 0 ? std::string("cw ") : std::string("ccw ")) + std::to_string(angle_y_hori * 180 / M_PI) + " from " + std::to_string(cur_yaw * 180 / M_PI) + " to " + std::to_string(tgt_yaw * 180 / M_PI);
                                     navi_pub->publish(txt);
                                 }
                             }
+                            if (yaw_adj_cd > 0) type_mask = 0x9c7;
+                            gettimeofday(&tv, NULL);
+                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, type_mask, 0, 0, 0, vel_f, vel_r, vel_d, 0, 0, 0, tgt_yaw, 0);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd, buf, len);
                         } else if (move_status == MOVE_UP || move_status == MOVE_DOWN) {
                             float vel_f = 0;
                             float vel_r = 0;
