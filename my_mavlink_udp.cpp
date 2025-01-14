@@ -427,13 +427,11 @@ int main(int argc, char *argv[]) {
                                 if (x < CLOSE_DIST_M) close_confirm_cnt++; else close_confirm_cnt = 0;
                                 if (x > FAR_DIST_M) far_confirm_cnt++; else far_confirm_cnt = 0;
                                 if (low_confirm_cnt > 2) {
-                                    adj_cnt++;
                                     vel_d = -0.1;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too low, move up";
                                     navi_pub->publish(txt);
                                 } else if (high_confirm_cnt > 2) {
-                                    adj_cnt++;
                                     vel_d = 0.1;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too high, move down";
@@ -454,8 +452,8 @@ int main(int argc, char *argv[]) {
                                 }
                                 if (adj_cnt > 5) {
                                     adj_cnt = 0;
-                                    vel_f = 0;
-                                    vel_d = 0;
+                                    far_confirm_cnt = 0;
+                                    close_confirm_cnt = 0;
                                 }
 
                                 float vx, vy;
@@ -529,35 +527,33 @@ int main(int argc, char *argv[]) {
                                 if (y > 0.2) left_confirm_cnt++; else left_confirm_cnt = 0;
                                 if (y< -0.2) right_confirm_cnt++; else right_confirm_cnt = 0;
                                 if (close_confirm_cnt > 2) {
-                                    vel_f = -0.1;
                                     adj_cnt++;
+                                    vel_f = -0.1;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too close, move away";
                                     navi_pub->publish(txt);
                                 } else if (far_confirm_cnt > 2) {
-                                    vel_f = 0.1;
                                     adj_cnt++;
+                                    vel_f = 0.1;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too far, move close";
                                     navi_pub->publish(txt);
                                 }
                                 if (left_confirm_cnt > 2) {
                                     vel_r = -0.1;
-                                    adj_cnt++;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too right, move left";
                                     navi_pub->publish(txt);
                                 } else if (right_confirm_cnt > 2) {
                                     vel_r = 0.1;
-                                    adj_cnt++;
                                     auto txt = std_msgs::msg::String();
                                     txt.data = "too left, move right";
                                     navi_pub->publish(txt);
                                 }
                                 if (adj_cnt > 5) {
                                     adj_cnt = 0;
-                                    vel_f = 0;
-                                    vel_r = 0;
+                                    far_confirm_cnt = 0;
+                                    close_confirm_cnt = 0;
                                 }
                             }
                             gettimeofday(&tv, NULL);
