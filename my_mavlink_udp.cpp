@@ -19,6 +19,7 @@
 #include "mavlink/ardupilotmega/mavlink.h"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "std_msgs/msg/float32.hpp"
 #include "visualization_msgs/msg/marker.hpp"
 
 // ROS coordinate system, x axis = vehicle front
@@ -146,6 +147,7 @@ int main(int argc, char *argv[]) {
     auto node = rclcpp::Node::make_shared("mavlink_udp");
     auto navi_pub = node->create_publisher<std_msgs::msg::String>("navi", 1);
     auto vis_pub = node->create_publisher<visualization_msgs::msg::Marker>("struct_lines", 1);
+    auto roll_pub = node->create_publisher<std_msgs::msg::Float32>("roll", 1);
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -288,7 +290,9 @@ int main(int argc, char *argv[]) {
                             att_rcved = true;
                             mavlink_attitude_t att;
                             mavlink_msg_attitude_decode(&msg, &att);
-                            cur_yaw = att.yaw;
+                            auto m = std_msgs::msg::Float32();
+                            m.data = att.roll;
+                            roll_pub->publish(m);
                         }
                     }
                 }
