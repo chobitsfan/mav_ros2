@@ -126,7 +126,6 @@ int main(int argc, char *argv[]) {
     };
     int mission_idx = -1;
     float cur_vio_x = 0, cur_vio_y = 0, cur_vio_z = 0;
-    float wp_vio_x = 0, wp_vio_y = 0, wp_vio_z = 0;
     struct lines_3d detected_structs;
     struct lines_3d last_detected_structs;
     int confirm_cnt = 0;
@@ -140,8 +139,6 @@ int main(int argc, char *argv[]) {
     int right_confirm_cnt = 0;
     int left_confirm_cnt = 0;
     int yaw_adj_cd = 0;
-    int vert_lost_cnt = 0;
-    int hori_lost_cnt = 0;
     float tgt_yaw = 0;
     unsigned int adj_cnt = 0;
     unsigned int cross_id = 0;
@@ -430,38 +427,7 @@ int main(int argc, char *argv[]) {
                             uint16_t type_mask = 0xdc7;
                             if (move_status == MOVE_LEFT) vel_r = -0.2;
                             if (detected_structs.hori_x == 0) {
-                                hori_lost_cnt++;
-                                if (hori_lost_cnt > 2 && hori_lost_cnt < 10) {
-                                    float t = -last_detected_structs.hori_y / last_detected_structs.hori_vy;
-                                    float z = last_detected_structs.hori_z + last_detected_structs.hori_vz * t;
-                                    if (z > 0) {
-                                        vel_d = -0.1;
-                                        auto txt = std_msgs::msg::String();
-                                        txt.data = "lost horizontal struct, move up";
-                                        navi_pub->publish(txt);
-                                    } else {
-                                        vel_d = 0.1;
-                                        auto txt = std_msgs::msg::String();
-                                        txt.data = "lost horizontal struct, move down";
-                                        navi_pub->publish(txt);
-                                    }
-                                    line_list.header.stamp = node->get_clock()->now();
-                                    line_list.ns = "hori_struct";
-                                    line_list.color.r = line_list.color.g = line_list.color.b = 1.0;
-                                    line_list.points.clear();
-                                    geometry_msgs::msg::Point p;
-                                    p.x = last_detected_structs.hori_x + last_detected_structs.hori_vx;
-                                    p.y = last_detected_structs.hori_y + last_detected_structs.hori_vy;
-                                    p.z = last_detected_structs.hori_z + last_detected_structs.hori_vz;
-                                    line_list.points.push_back(p);
-                                    p.x = last_detected_structs.hori_x - last_detected_structs.hori_vx;
-                                    p.y = last_detected_structs.hori_y - last_detected_structs.hori_vy;
-                                    p.z = last_detected_structs.hori_z - last_detected_structs.hori_vz;
-                                    line_list.points.push_back(p);
-                                    vis_pub->publish(line_list);
-                                }
                             } else {
-                                hori_lost_cnt = 0;
                                 float t = -detected_structs.hori_y / detected_structs.hori_vy;
                                 float z = detected_structs.hori_z + detected_structs.hori_vz * t;
                                 float x = detected_structs.hori_x + detected_structs.hori_vx * t;
@@ -530,38 +496,7 @@ int main(int argc, char *argv[]) {
                             float vel_d = 0.2;
                             if (move_status == MOVE_UP) vel_d = -0.2;
                             if (detected_structs.vert_x == 0) {
-                                vert_lost_cnt++;
-                                if (vert_lost_cnt > 2 && vert_lost_cnt < 10) {
-                                    float t = -last_detected_structs.vert_z / last_detected_structs.vert_vz;
-                                    float y = last_detected_structs.vert_y + last_detected_structs.vert_vy * t;
-                                    if (y > 0) {
-                                        vel_r = -0.1;
-                                        auto txt = std_msgs::msg::String();
-                                        txt.data = "lost vertical struct, move left";
-                                        navi_pub->publish(txt);
-                                    } else {
-                                        vel_r = 0.1;
-                                        auto txt = std_msgs::msg::String();
-                                        txt.data = "lost vertical struct, move right";
-                                        navi_pub->publish(txt);
-                                    }
-                                    line_list.header.stamp = node->get_clock()->now();
-                                    line_list.color.r = line_list.color.g = line_list.color.b = 1.0;
-                                    line_list.ns = "vert_struct";
-                                    line_list.points.clear();
-                                    geometry_msgs::msg::Point p;
-                                    p.x = last_detected_structs.vert_x + last_detected_structs.vert_vx;
-                                    p.y = last_detected_structs.vert_y + last_detected_structs.vert_vy;
-                                    p.z = last_detected_structs.vert_z + last_detected_structs.vert_vz;
-                                    line_list.points.push_back(p);
-                                    p.x = last_detected_structs.vert_x - last_detected_structs.vert_vx;
-                                    p.y = last_detected_structs.vert_y - last_detected_structs.vert_vy;
-                                    p.z = last_detected_structs.vert_z - last_detected_structs.vert_vz;
-                                    line_list.points.push_back(p);
-                                    vis_pub->publish(line_list);
-                                }
                             } else {
-                                vert_lost_cnt = 0;
                                 float t = -detected_structs.vert_z / detected_structs.vert_vz;
                                 float x = detected_structs.vert_x + detected_structs.vert_vx * t;
                                 float y = detected_structs.vert_y + detected_structs.vert_vy * t;
