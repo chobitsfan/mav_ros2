@@ -21,6 +21,7 @@
 #include "std_msgs/msg/string.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "visualization_msgs/msg/marker.hpp"
+#include "geometry_msgs/msg/point.hpp"
 
 // ROS coordinate system, x axis = vehicle front
 
@@ -43,6 +44,11 @@
 #define CLOSE_DIST_M 0.5
 #define FAR_DIST_M 0.9
 
+#define TEMP_MATCHING
+
+bool cog_ok = false;
+unsigned int no_cog_c = 0;
+
 struct __attribute__((packed)) lines_3d {
 //where (vx, vy, vz) is a normalized vector collinear to the line and (x0, y0, z0) is a point on the line.
     float vert_x;
@@ -61,6 +67,17 @@ struct __attribute__((packed)) lines_3d {
 
 float angle_between_vectors(float v1x, float v1y, float v1z, float v2x, float v2y, float v2z) {
     return acosf((v1x * v2x + v1y * v2y + v1z * v2z) / (sqrtf(v1x * v1x + v1y * v1y + v1z * v1z) * sqrtf(v2x * v2x + v2y * v2y + v2z * v2z)));
+}
+
+void cog_callback(const geometry_msgs::msg::Point::SharedPtr msg) {
+    //printf("cog %f %f\n", msg->x, msg->y);
+    if (msg->x >= 0 && msg->y >= 0) {
+        cog_ok = true;
+        no_cog_c = 0;
+    } else {
+        no_cog_c++;
+        cog_ok = false;
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -148,6 +165,7 @@ int main(int argc, char *argv[]) {
     auto navi_pub = node->create_publisher<std_msgs::msg::String>("navi", 1);
     auto vis_pub = node->create_publisher<visualization_msgs::msg::Marker>("struct_lines", 1);
     auto roll_pub = node->create_publisher<std_msgs::msg::Float32>("roll", 1);
+    auto cog_sub = node->create_subscription<geometry_msgs::msg::Point>("templateCOG", 1, cog_callback);
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -223,7 +241,8 @@ int main(int argc, char *argv[]) {
     memset(&status, 0, sizeof(status));
 
     while (rclcpp::ok()) {
-        retval = poll(pfds, MY_NUM_PFDS, -1);
+        rclcpp::spin_some(node);
+        retval = poll(pfds, MY_NUM_PFDS, 10);
         if (retval > 0) {
             if (pfds[0].revents & POLLIN) {
                 avail = read(uart_fd, buf, 1024);
@@ -339,6 +358,15 @@ int main(int argc, char *argv[]) {
                     if (yaw_adj_cd > 0) yaw_adj_cd--;
                     if (mission_idx >= 0 && (unsigned int)mission_idx < (sizeof(missions) / sizeof(missions[0]))) {
                         if (navi_status == SEARCH_STRUCT_CROSS) {
+#ifdef TEMP_MATCHING
+                            if (cog_ok) {
+                                auto txt = std_msgs::msg::String();
+                                txt.data = "cross detected, mission idx " + std::to_string(mission_idx);
+                                navi_pub->publish(txt);
+                                navi_status = PASS_STRUCT_CROSS;
+                                move_status = missions[mission_idx];
+                            }
+#else
                             if (detected_structs.vert_x != 0 && detected_structs.hori_x != 0) confirm_cnt++;
                             if (confirm_cnt > 2) {
                                 auto txt = std_msgs::msg::String();
@@ -373,7 +401,17 @@ int main(int argc, char *argv[]) {
                                 line_list.points.push_back(p);
                                 vis_pub->publish(line_list);
                             }
+#endif
                         } else if (navi_status == PASS_STRUCT_CROSS) {
+#ifdef TEMP_MATCHING
+                            if (no_cog_c > 8) {
+                                auto txt = std_msgs::msg::String();
+                                txt.data = "cross passed";
+                                navi_pub->publish(txt);
+                                navi_status = SEARCH_STRUCT_CROSS;
+                                if (mission_idx >= 0) mission_idx++;
+                            }
+#else
                             if (detected_structs.vert_x == 0 || detected_structs.hori_x == 0) confirm_cnt++;
                             if (confirm_cnt > 2) {
                                 auto txt = std_msgs::msg::String();
@@ -383,6 +421,7 @@ int main(int argc, char *argv[]) {
                                 navi_status = SEARCH_STRUCT_CROSS;
                                 if (mission_idx >= 0) mission_idx++;
                             }
+#endif
                         }
                         if (move_status == MOVE_RIGHT || move_status == MOVE_LEFT) {
                             float vel_r = 0.2;
@@ -588,7 +627,7 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
-        } else break;
+        }
     }
 
     close(uart_fd);
