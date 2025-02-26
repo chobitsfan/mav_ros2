@@ -392,7 +392,7 @@ int main(int argc, char *argv[]) {
                             if (move_status == MOVE_LEFT) vel_r = -0.2;
                             if (detected_structs.hori_x == 0) {
                                 hori_lost_cnt++;
-                                if (hori_lost_cnt > 2) {
+                                if (hori_lost_cnt > 2 && hori_lost_cnt < 10) {
                                     float t = -last_detected_structs.hori_y / last_detected_structs.hori_vy;
                                     float z = last_detected_structs.hori_z + last_detected_structs.hori_vz * t;
                                     if (z > 0) {
@@ -492,7 +492,7 @@ int main(int argc, char *argv[]) {
                             if (move_status == MOVE_UP) vel_d = -0.2;
                             if (detected_structs.vert_x == 0) {
                                 vert_lost_cnt++;
-                                if (vert_lost_cnt > 2) {
+                                if (vert_lost_cnt > 2 && vert_lost_cnt < 10) {
                                     float t = -last_detected_structs.vert_z / last_detected_structs.vert_vz;
                                     float y = last_detected_structs.vert_y + last_detected_structs.vert_vy * t;
                                     if (y > 0) {
