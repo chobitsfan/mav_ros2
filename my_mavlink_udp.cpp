@@ -22,6 +22,8 @@
 #include "std_msgs/msg/float32.hpp"
 #include "visualization_msgs/msg/marker.hpp"
 #include "geometry_msgs/msg/point.hpp"
+#include "sensor_msgs/msg/range.hpp"
+#include "geometry_msgs/msg/twist_stamped.hpp"
 
 // ROS coordinate system, x axis = vehicle front
 
@@ -86,13 +88,17 @@ int main(int argc, char *argv[]) {
         MOVE_UP,
         MOVE_LEFT,
         MOVE_DOWN,
-        MOVE_RIGHT,
-        MOVE_UP,
         MOVE_LEFT,
+        MOVE_UP,
+        MOVE_RIGHT,
         MOVE_DOWN,
         MOVE_RIGHT,
         MOVE_UP,
         MOVE_LEFT,
+        MOVE_DOWN,
+        MOVE_LEFT,
+        MOVE_UP,
+        MOVE_RIGHT,
         MOVE_DOWN,
         MOVE_RIGHT,
         LAND,
@@ -114,26 +120,22 @@ int main(int argc, char *argv[]) {
     bool dist_sensor_rcved = false;
     bool fc_prx_too_close = false;
 
-    visualization_msgs::msg::Marker line_list;
-    line_list.header.frame_id = "body";
-    line_list.type = visualization_msgs::msg::Marker::LINE_LIST;
-    line_list.action = visualization_msgs::msg::Marker::ADD;
-    line_list.pose.orientation.w = 1.0;
-    line_list.id = 1;
-    line_list.scale.x = 0.02;
-    line_list.color.r = 1.0;
-    line_list.color.g = 1.0;
-    line_list.color.b = 1.0;
-    line_list.color.a = 1.0;
-
     memset(&last_detected_structs, 0, sizeof(last_detected_structs));
 
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("mavlink_udp");
     auto navi_pub = node->create_publisher<std_msgs::msg::String>("navi", 1);
-    auto vis_pub = node->create_publisher<visualization_msgs::msg::Marker>("struct_lines", 1);
     auto roll_pub = node->create_publisher<std_msgs::msg::Float32>("roll", 1);
+    auto sonar_pub = node->create_publisher<sensor_msgs::msg::Range>("sonar", 1);
+    auto vel_pub = node->create_publisher<geometry_msgs::msg::TwistStamped>("tgt_vel", 1);
     auto intersec_sub = node->create_subscription<geometry_msgs::msg::Point>("templateCOG", 1, intersect_callback);
+
+    auto rng = sensor_msgs::msg::Range();
+    rng.header.frame_id = "body";
+    rng.radiation_type = 0;
+    rng.field_of_view = 1.2;
+    rng.min_range = 0.2;
+    rng.max_range = 7.5;
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -265,12 +267,12 @@ int main(int argc, char *argv[]) {
                                 mission_idx = -1;
                             }
                             if (!att_rcved) {
-                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_ATTITUDE, 100000, 0, 0, 0, 0, 0);
+                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_ATTITUDE, 100'000, 0, 0, 0, 0, 0);
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd, buf, len);
                             }
                             if (!dist_sensor_rcved) {
-                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_DISTANCE_SENSOR, 1000000, 0, 0, 0, 0, 0);
+                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_DISTANCE_SENSOR, 100'000, 0, 0, 0, 0, 0);
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd, buf, len);
                             }
@@ -291,6 +293,9 @@ int main(int argc, char *argv[]) {
                             mavlink_msg_distance_sensor_decode(&msg, &dist_sensor);
                             //printf("prx dist %d cm\n", dist_sensor.current_distance);
                             if (dist_sensor.current_distance < (CLOSE_DIST_M * 100)) fc_prx_too_close = true; else fc_prx_too_close = false;
+                            rng.header.stamp = node->get_clock()->now();
+                            rng.range = dist_sensor.current_distance * 0.01;
+                            sonar_pub->publish(rng);
                         }
                     }
                 }
@@ -321,7 +326,7 @@ int main(int argc, char *argv[]) {
                     if (mission_idx >= 0 && (unsigned int)mission_idx < (sizeof(missions) / sizeof(missions[0]))) {
                         if (navi_status == SEARCH_STRUCT_CROSS) {
                             gettimeofday(&tv, NULL);
-                            if (((tv.tv_sec - tv_intersect.tv_sec) * 1'000'000 + tv.tv_usec - tv_intersect.tv_usec) < 1'000'000) {
+                            if (((tv.tv_sec - tv_intersect.tv_sec) * 1'000'000 + tv.tv_usec - tv_intersect.tv_usec) < 500'000) {
                                 auto txt = std_msgs::msg::String();
                                 txt.data = "cross detected, mission idx " + std::to_string(mission_idx);
                                 navi_pub->publish(txt);
@@ -330,7 +335,7 @@ int main(int argc, char *argv[]) {
                             }
                         } else if (navi_status == PASS_STRUCT_CROSS) {
                             gettimeofday(&tv, NULL);
-                            if (((tv.tv_sec - tv_intersect.tv_sec) * 1'000'000 + tv.tv_usec - tv_intersect.tv_usec) > 2'000'000) {
+                            if (((tv.tv_sec - tv_intersect.tv_sec) * 1'000'000 + tv.tv_usec - tv_intersect.tv_usec) > 1'500'000) {
                                 auto txt = std_msgs::msg::String();
                                 txt.data = "cross passed";
                                 navi_pub->publish(txt);
@@ -408,6 +413,14 @@ int main(int argc, char *argv[]) {
                             mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, type_mask, 0, 0, 0, vel_f, vel_r, vel_d, 0, 0, 0, tgt_yaw, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
+
+                            auto twist_stamped = geometry_msgs::msg::TwistStamped();
+                            twist_stamped.header.stamp = node->get_clock()->now();
+                            twist_stamped.header.frame_id = "body";
+                            twist_stamped.twist.linear.x = vel_f;
+                            twist_stamped.twist.linear.y = -vel_r;
+                            twist_stamped.twist.linear.z = -vel_d;
+                            vel_pub->publish(twist_stamped);
                         } else if (move_status == MOVE_UP || move_status == MOVE_DOWN) {
                             float vel_f = 0;
                             float vel_r = 0;
@@ -423,6 +436,14 @@ int main(int argc, char *argv[]) {
                             mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, vel_f, vel_r, vel_d, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
+
+                            auto twist_stamped = geometry_msgs::msg::TwistStamped();
+                            twist_stamped.header.stamp = node->get_clock()->now();
+                            twist_stamped.header.frame_id = "body";
+                            twist_stamped.twist.linear.x = vel_f;
+                            twist_stamped.twist.linear.y = -vel_r;
+                            twist_stamped.twist.linear.z = -vel_d;
+                            vel_pub->publish(twist_stamped);
                         } else if (move_status == LAND) {
                             mavlink_msg_set_mode_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, 9); //land
                             len = mavlink_msg_to_send_buffer(buf, &msg);
