@@ -119,7 +119,7 @@ int main(int argc, char *argv[]) {
     float tgt_yaw = 0;
     unsigned int adj_cnt = 0;
     bool dist_sensor_rcved = false;
-    int sonar_close_cnt = 0;
+    bool fc_prx_too_close = false;
 
     visualization_msgs::msg::Marker line_list;
     line_list.header.frame_id = "body";
@@ -297,7 +297,7 @@ int main(int argc, char *argv[]) {
                             mavlink_distance_sensor_t dist_sensor;
                             mavlink_msg_distance_sensor_decode(&msg, &dist_sensor);
                             //printf("prx dist %d cm\n", dist_sensor.current_distance);
-                            if (dist_sensor.current_distance < (CLOSE_DIST_M * 100)) sonar_close_cnt++; else sonar_close_cnt = 0;
+                            if (dist_sensor.current_distance < (CLOSE_DIST_M * 100)) fc_prx_too_close = true; else fc_prx_too_close = false;
                         }
                     }
                 }
@@ -313,7 +313,6 @@ int main(int argc, char *argv[]) {
                         mavlink_msg_att_pos_mocap_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000000+tv.tv_usec, pose, pose[4], -pose[5], -pose[6], covar);
                         len = mavlink_msg_to_send_buffer(buf, &msg);
                         write(uart_fd, buf, len);
-                        gettimeofday(&tv, NULL);
                         mavlink_msg_vision_speed_estimate_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000000+tv.tv_usec, pose[7], -pose[8], -pose[9], covar, 0);
                         len = mavlink_msg_to_send_buffer(buf, &msg);
                         write(uart_fd, buf, len);
@@ -419,7 +418,7 @@ int main(int argc, char *argv[]) {
                             float vel_r = 0;
                             float vel_d = 0.2;
                             if (move_status == MOVE_UP) vel_d = -0.2;
-                            if (sonar_close_cnt > 2) {
+                            if (fc_prx_too_close) {
                                 vel_f = -0.1;
                                 auto txt = std_msgs::msg::String();
                                 txt.data = "too close, move away";
