@@ -44,8 +44,7 @@
 #define CLOSE_DIST_M 0.5
 #define FAR_DIST_M 0.9
 
-bool cog_ok = false;
-unsigned int no_cog_c = 0;
+struct timeval tv_intersect = {0, 0};
 
 struct __attribute__((packed)) lines_3d {
 //where (vx, vy, vz) is a normalized vector collinear to the line and (x0, y0, z0) is a point on the line.
@@ -61,15 +60,9 @@ float angle_between_vectors(float v1x, float v1y, float v1z, float v2x, float v2
     return acosf((v1x * v2x + v1y * v2y + v1z * v2z) / (sqrtf(v1x * v1x + v1y * v1y + v1z * v1z) * sqrtf(v2x * v2x + v2y * v2y + v2z * v2z)));
 }
 
-void cog_callback(const geometry_msgs::msg::Point::SharedPtr msg) {
+void intersect_callback(const geometry_msgs::msg::Point::SharedPtr msg) {
     //printf("cog %f %f\n", msg->x, msg->y);
-    if (msg->x >= 0 && msg->y >= 0) {
-        cog_ok = true;
-        no_cog_c = 0;
-    } else {
-        no_cog_c++;
-        cog_ok = false;
-    }
+    gettimeofday(&tv_intersect, NULL);
 }
 
 int main(int argc, char *argv[]) {
@@ -140,7 +133,7 @@ int main(int argc, char *argv[]) {
     auto navi_pub = node->create_publisher<std_msgs::msg::String>("navi", 1);
     auto vis_pub = node->create_publisher<visualization_msgs::msg::Marker>("struct_lines", 1);
     auto roll_pub = node->create_publisher<std_msgs::msg::Float32>("roll", 1);
-    auto cog_sub = node->create_subscription<geometry_msgs::msg::Point>("templateCOG", 1, cog_callback);
+    auto intersec_sub = node->create_subscription<geometry_msgs::msg::Point>("templateCOG", 1, intersect_callback);
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY);
@@ -327,7 +320,8 @@ int main(int argc, char *argv[]) {
                     if (yaw_adj_cd > 0) yaw_adj_cd--;
                     if (mission_idx >= 0 && (unsigned int)mission_idx < (sizeof(missions) / sizeof(missions[0]))) {
                         if (navi_status == SEARCH_STRUCT_CROSS) {
-                            if (cog_ok) {
+                            gettimeofday(&tv, NULL);
+                            if (((tv.tv_sec - tv_intersect.tv_sec) * 1'000'000 + tv.tv_usec - tv_intersect.tv_usec) < 1'000'000) {
                                 auto txt = std_msgs::msg::String();
                                 txt.data = "cross detected, mission idx " + std::to_string(mission_idx);
                                 navi_pub->publish(txt);
@@ -335,7 +329,8 @@ int main(int argc, char *argv[]) {
                                 move_status = missions[mission_idx];
                             }
                         } else if (navi_status == PASS_STRUCT_CROSS) {
-                            if (no_cog_c > 8) {
+                            gettimeofday(&tv, NULL);
+                            if (((tv.tv_sec - tv_intersect.tv_sec) * 1'000'000 + tv.tv_usec - tv_intersect.tv_usec) > 2'000'000) {
                                 auto txt = std_msgs::msg::String();
                                 txt.data = "cross passed";
                                 navi_pub->publish(txt);
