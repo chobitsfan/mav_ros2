@@ -44,19 +44,11 @@
 #define CLOSE_DIST_M 0.5
 #define FAR_DIST_M 0.9
 
-#define TEMP_MATCHING
-
 bool cog_ok = false;
 unsigned int no_cog_c = 0;
 
 struct __attribute__((packed)) lines_3d {
 //where (vx, vy, vz) is a normalized vector collinear to the line and (x0, y0, z0) is a point on the line.
-    float vert_x;
-    float vert_y;
-    float vert_z;
-    float vert_vx;
-    float vert_vy;
-    float vert_vz;
     float hori_x;
     float hori_y;
     float hori_z;
@@ -101,25 +93,13 @@ int main(int argc, char *argv[]) {
         MOVE_UP,
         MOVE_LEFT,
         MOVE_DOWN,
-        MOVE_LEFT,
-        MOVE_UP,
-        MOVE_RIGHT,
-        MOVE_DOWN,
         MOVE_RIGHT,
         MOVE_UP,
         MOVE_LEFT,
         MOVE_DOWN,
-        MOVE_LEFT,
-        MOVE_UP,
-        MOVE_RIGHT,
-        MOVE_DOWN,
         MOVE_RIGHT,
         MOVE_UP,
         MOVE_LEFT,
-        MOVE_DOWN,
-        MOVE_LEFT,
-        MOVE_UP,
-        MOVE_RIGHT,
         MOVE_DOWN,
         MOVE_RIGHT,
         LAND,
@@ -128,7 +108,6 @@ int main(int argc, char *argv[]) {
     float cur_vio_x = 0, cur_vio_y = 0, cur_vio_z = 0;
     struct lines_3d detected_structs;
     struct lines_3d last_detected_structs;
-    int confirm_cnt = 0;
     int navi_status = SEARCH_STRUCT_CROSS;
     int move_status = HOVER;
     int low_confirm_cnt = 0;
@@ -136,12 +115,11 @@ int main(int argc, char *argv[]) {
     int close_confirm_cnt = 0;
     int far_confirm_cnt = 0;
     int align_confirm_cnt = 0;
-    int right_confirm_cnt = 0;
-    int left_confirm_cnt = 0;
     int yaw_adj_cd = 0;
     float tgt_yaw = 0;
     unsigned int adj_cnt = 0;
-    unsigned int cross_id = 0;
+    bool dist_sensor_rcved = false;
+    int sonar_close_cnt = 0;
 
     visualization_msgs::msg::Marker line_list;
     line_list.header.frame_id = "body";
@@ -298,6 +276,11 @@ int main(int argc, char *argv[]) {
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd, buf, len);
                             }
+                            if (!dist_sensor_rcved) {
+                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, 0, 0, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_DISTANCE_SENSOR, 1000000, 0, 0, 0, 0, 0);
+                                len = mavlink_msg_to_send_buffer(buf, &msg);
+                                write(uart_fd, buf, len);
+                            }
                         } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
                             mavlink_statustext_t txt;
                             mavlink_msg_statustext_decode(&msg, &txt);
@@ -309,6 +292,12 @@ int main(int argc, char *argv[]) {
                             auto m = std_msgs::msg::Float32();
                             m.data = att.roll;
                             roll_pub->publish(m);
+                        } else if (msg.msgid == MAVLINK_MSG_ID_DISTANCE_SENSOR) {
+                            dist_sensor_rcved = true;
+                            mavlink_distance_sensor_t dist_sensor;
+                            mavlink_msg_distance_sensor_decode(&msg, &dist_sensor);
+                            //printf("prx dist %d cm\n", dist_sensor.current_distance);
+                            if (dist_sensor.current_distance < (CLOSE_DIST_M * 100)) sonar_close_cnt++; else sonar_close_cnt = 0;
                         }
                     }
                 }
@@ -336,26 +325,9 @@ int main(int argc, char *argv[]) {
             }
             if (pfds[2].revents & POLLIN) {
                 if (recv(ipc_fd2, &detected_structs, sizeof(detected_structs), 0) > 0) {
-                    /*if (detected_structs.hori_x != 0) {
-                        float vx, vy;
-                        if (detected_structs.hori_vy < 0) {
-                            vx = -detected_structs.hori_vx;
-                            vy = -detected_structs.hori_vy;
-                        } else {
-                            vx = detected_structs.hori_vx;
-                            vy = detected_structs.hori_vy;
-                        }
-                        float angle_y_hori = acosf(vy);
-                        if (angle_y_hori > 0.15) align_confirm_cnt++; else align_confirm_cnt = 0;
-                        if (align_confirm_cnt > 2) {
-                            align_confirm_cnt = 0;
-                            printf("angle_y_hori %f %f\n", angle_y_hori, vx);
-                        }
-                    }*/
                     if (yaw_adj_cd > 0) yaw_adj_cd--;
                     if (mission_idx >= 0 && (unsigned int)mission_idx < (sizeof(missions) / sizeof(missions[0]))) {
                         if (navi_status == SEARCH_STRUCT_CROSS) {
-#ifdef TEMP_MATCHING
                             if (cog_ok) {
                                 auto txt = std_msgs::msg::String();
                                 txt.data = "cross detected, mission idx " + std::to_string(mission_idx);
@@ -363,44 +335,7 @@ int main(int argc, char *argv[]) {
                                 navi_status = PASS_STRUCT_CROSS;
                                 move_status = missions[mission_idx];
                             }
-#else
-                            if (detected_structs.vert_x != 0 && detected_structs.hori_x != 0) confirm_cnt++;
-                            if (confirm_cnt > 2) {
-                                auto txt = std_msgs::msg::String();
-                                txt.data = "cross detected, mission idx " + std::to_string(mission_idx);
-                                navi_pub->publish(txt);
-                                confirm_cnt = 0;
-                                navi_status = PASS_STRUCT_CROSS;
-                                move_status = missions[mission_idx];
-
-                                line_list.header.stamp = node->get_clock()->now();
-                                cross_id++;
-                                line_list.id = cross_id;
-                                line_list.ns = "cross";
-                                line_list.color.r = line_list.color.g = line_list.color.b = 0.5;
-                                line_list.points.clear();
-                                geometry_msgs::msg::Point p;
-                                p.x = detected_structs.hori_x + detected_structs.hori_vx;
-                                p.y = detected_structs.hori_y + detected_structs.hori_vy;
-                                p.z = detected_structs.hori_z + detected_structs.hori_vz;
-                                line_list.points.push_back(p);
-                                p.x = detected_structs.hori_x - detected_structs.hori_vx;
-                                p.y = detected_structs.hori_y - detected_structs.hori_vy;
-                                p.z = detected_structs.hori_z - detected_structs.hori_vz;
-                                line_list.points.push_back(p);
-                                p.x = detected_structs.vert_x + detected_structs.vert_vx;
-                                p.y = detected_structs.vert_y + detected_structs.vert_vy;
-                                p.z = detected_structs.vert_z + detected_structs.vert_vz;
-                                line_list.points.push_back(p);
-                                p.x = detected_structs.vert_x - detected_structs.vert_vx;
-                                p.y = detected_structs.vert_y - detected_structs.vert_vy;
-                                p.z = detected_structs.vert_z - detected_structs.vert_vz;
-                                line_list.points.push_back(p);
-                                vis_pub->publish(line_list);
-                            }
-#endif
                         } else if (navi_status == PASS_STRUCT_CROSS) {
-#ifdef TEMP_MATCHING
                             if (no_cog_c > 8) {
                                 auto txt = std_msgs::msg::String();
                                 txt.data = "cross passed";
@@ -408,17 +343,6 @@ int main(int argc, char *argv[]) {
                                 navi_status = SEARCH_STRUCT_CROSS;
                                 if (mission_idx >= 0) mission_idx++;
                             }
-#else
-                            if (detected_structs.vert_x == 0 || detected_structs.hori_x == 0) confirm_cnt++;
-                            if (confirm_cnt > 2) {
-                                auto txt = std_msgs::msg::String();
-                                txt.data = "cross passed";
-                                navi_pub->publish(txt);
-                                confirm_cnt = 0;
-                                navi_status = SEARCH_STRUCT_CROSS;
-                                if (mission_idx >= 0) mission_idx++;
-                            }
-#endif
                         }
                         if (move_status == MOVE_RIGHT || move_status == MOVE_LEFT) {
                             float vel_r = 0.2;
@@ -495,44 +419,11 @@ int main(int argc, char *argv[]) {
                             float vel_r = 0;
                             float vel_d = 0.2;
                             if (move_status == MOVE_UP) vel_d = -0.2;
-                            if (detected_structs.vert_x == 0) {
-                            } else {
-                                float t = -detected_structs.vert_z / detected_structs.vert_vz;
-                                float x = detected_structs.vert_x + detected_structs.vert_vx * t;
-                                float y = detected_structs.vert_y + detected_structs.vert_vy * t;
-                                if (x < CLOSE_DIST_M) close_confirm_cnt++; else close_confirm_cnt = 0;
-                                if (x > FAR_DIST_M) far_confirm_cnt++; else far_confirm_cnt = 0;
-                                if (y > 0.2) left_confirm_cnt++; else left_confirm_cnt = 0;
-                                if (y< -0.2) right_confirm_cnt++; else right_confirm_cnt = 0;
-                                if (close_confirm_cnt > 2) {
-                                    adj_cnt++;
-                                    vel_f = -0.1;
-                                    auto txt = std_msgs::msg::String();
-                                    txt.data = "too close, move away";
-                                    navi_pub->publish(txt);
-                                } else if (far_confirm_cnt > 2) {
-                                    adj_cnt++;
-                                    vel_f = 0.1;
-                                    auto txt = std_msgs::msg::String();
-                                    txt.data = "too far, move close";
-                                    navi_pub->publish(txt);
-                                }
-                                if (left_confirm_cnt > 2) {
-                                    vel_r = -0.1;
-                                    auto txt = std_msgs::msg::String();
-                                    txt.data = "too right, move left";
-                                    navi_pub->publish(txt);
-                                } else if (right_confirm_cnt > 2) {
-                                    vel_r = 0.1;
-                                    auto txt = std_msgs::msg::String();
-                                    txt.data = "too left, move right";
-                                    navi_pub->publish(txt);
-                                }
-                                if (adj_cnt > 5) {
-                                    adj_cnt = 0;
-                                    far_confirm_cnt = 0;
-                                    close_confirm_cnt = 0;
-                                }
+                            if (sonar_close_cnt > 2) {
+                                vel_f = -0.1;
+                                auto txt = std_msgs::msg::String();
+                                txt.data = "too close, move away";
+                                navi_pub->publish(txt);
                             }
                             gettimeofday(&tv, NULL);
                             mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, 0, 0, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, vel_f, vel_r, vel_d, 0, 0, 0, 0, 0);
@@ -543,14 +434,6 @@ int main(int argc, char *argv[]) {
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
                         }
-                    }
-                    if (detected_structs.vert_x != 0) {
-                        last_detected_structs.vert_x = detected_structs.vert_x;
-                        last_detected_structs.vert_y = detected_structs.vert_y;
-                        last_detected_structs.vert_z = detected_structs.vert_z;
-                        last_detected_structs.vert_vx = detected_structs.vert_vx;
-                        last_detected_structs.vert_vy = detected_structs.vert_vy;
-                        last_detected_structs.vert_vz = detected_structs.vert_vz;
                     }
                     if (detected_structs.hori_x != 0) {
                         last_detected_structs.hori_x = detected_structs.hori_x;
