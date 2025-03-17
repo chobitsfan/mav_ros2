@@ -132,6 +132,7 @@ int main(int argc, char *argv[]) {
     auto roll_pub = node->create_publisher<std_msgs::msg::Float32>("roll", 1);
     auto sonar_pub = node->create_publisher<sensor_msgs::msg::Range>("sonar", 1);
     auto vel_pub = node->create_publisher<geometry_msgs::msg::TwistStamped>("tgt_vel", 1);
+    auto tts_pub = node->create_publisher<std_msgs::msg::String>("tts", 1);
     auto intersec_sub = node->create_subscription<geometry_msgs::msg::Point>("templateCOG", 1, intersect_callback);
 
     auto rng = sensor_msgs::msg::Range();
@@ -334,22 +335,28 @@ int main(int argc, char *argv[]) {
                                 if ((move_status == MOVE_LEFT && intersect_cog[0] < 0.2) || (move_status == MOVE_RIGHT && intersect_cog[0] > 0.8) || (move_status == MOVE_UP && intersect_cog[1] < 0.2)) {
                                     slow_down = true;
                                     auto txt = std_msgs::msg::String();
-                                    txt.data = "cross detected on edge, slowing down";
+                                    txt.data = "intersection detected on edge, slowing down";
                                     navi_pub->publish(txt);
                                 } else {
                                     slow_down = false;
                                     auto txt = std_msgs::msg::String();
-                                    txt.data = "cross detected, mission idx " + std::to_string(mission_idx);
+                                    txt.data = "arrival at waypoint " + std::to_string(mission_idx);
                                     navi_pub->publish(txt);
+                                    tts_pub->publish(txt);
                                     navi_status = PASS_STRUCT_CROSS;
                                     move_status = missions[mission_idx];
+                                    // AP_NOTIFY_TONE_LOUD_WP_COMPLETE
+                                    // to noisy, cannot hear it
+                                    /*mavlink_msg_play_tune_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, "MFT200L8G>C3", "");
+                                    len = mavlink_msg_to_send_buffer(buf, &msg);
+                                    write(uart_fd, buf, len);*/
                                 }
                             }
                         } else if (navi_status == PASS_STRUCT_CROSS) {
                             gettimeofday(&tv, NULL);
                             if (((tv.tv_sec - tv_intersect.tv_sec) * 1'000'000 + tv.tv_usec - tv_intersect.tv_usec) > 1'500'000) {
                                 auto txt = std_msgs::msg::String();
-                                txt.data = "cross passed";
+                                txt.data = "intersection passed";
                                 navi_pub->publish(txt);
                                 navi_status = SEARCH_STRUCT_CROSS;
                                 if (mission_idx >= 0) mission_idx++;
