@@ -47,6 +47,7 @@
 #define FAR_DIST_M 0.9
 
 struct timeval tv_intersect = {0, 0};
+float intersect_cog[2] = {0, 0};
 
 struct __attribute__((packed)) lines_3d {
 //where (vx, vy, vz) is a normalized vector collinear to the line and (x0, y0, z0) is a point on the line.
@@ -63,7 +64,9 @@ float angle_between_vectors(float v1x, float v1y, float v1z, float v2x, float v2
 }
 
 void intersect_callback(const geometry_msgs::msg::Point::SharedPtr msg) {
-    //printf("cog %f %f\n", msg->x, msg->y);
+    //printf("intersection %f %f\n", msg->x, msg->y);
+    intersect_cog[0] = msg->x;
+    intersect_cog[1] = msg->y;
     gettimeofday(&tv_intersect, NULL);
 }
 
@@ -119,6 +122,7 @@ int main(int argc, char *argv[]) {
     unsigned int adj_cnt = 0;
     bool dist_sensor_rcved = false;
     bool fc_prx_too_close = false;
+    bool slow_down = false;
 
     memset(&last_detected_structs, 0, sizeof(last_detected_structs));
 
@@ -133,7 +137,7 @@ int main(int argc, char *argv[]) {
     auto rng = sensor_msgs::msg::Range();
     rng.header.frame_id = "body";
     rng.radiation_type = 0;
-    rng.field_of_view = 1.2;
+    rng.field_of_view = 1.0;
     rng.min_range = 0.2;
     rng.max_range = 7.5;
 
@@ -327,11 +331,19 @@ int main(int argc, char *argv[]) {
                         if (navi_status == SEARCH_STRUCT_CROSS) {
                             gettimeofday(&tv, NULL);
                             if (((tv.tv_sec - tv_intersect.tv_sec) * 1'000'000 + tv.tv_usec - tv_intersect.tv_usec) < 500'000) {
-                                auto txt = std_msgs::msg::String();
-                                txt.data = "cross detected, mission idx " + std::to_string(mission_idx);
-                                navi_pub->publish(txt);
-                                navi_status = PASS_STRUCT_CROSS;
-                                move_status = missions[mission_idx];
+                                if ((move_status == MOVE_LEFT && intersect_cog[0] < 0.2) || (move_status == MOVE_RIGHT && intersect_cog[0] > 0.8) || (move_status == MOVE_UP && intersect_cog[1] < 0.2)) {
+                                    slow_down = true;
+                                    auto txt = std_msgs::msg::String();
+                                    txt.data = "cross detected on edge, slowing down";
+                                    navi_pub->publish(txt);
+                                } else {
+                                    slow_down = false;
+                                    auto txt = std_msgs::msg::String();
+                                    txt.data = "cross detected, mission idx " + std::to_string(mission_idx);
+                                    navi_pub->publish(txt);
+                                    navi_status = PASS_STRUCT_CROSS;
+                                    move_status = missions[mission_idx];
+                                }
                             }
                         } else if (navi_status == PASS_STRUCT_CROSS) {
                             gettimeofday(&tv, NULL);
@@ -349,6 +361,7 @@ int main(int argc, char *argv[]) {
                             float vel_f = 0;
                             uint16_t type_mask = 0xdc7;
                             if (move_status == MOVE_LEFT) vel_r = -0.2;
+                            if (slow_down) vel_r = vel_r * 0.5f;
                             if (detected_structs.hori_x == 0) {
                             } else {
                                 float t = -detected_structs.hori_y / detected_structs.hori_vy;
@@ -426,6 +439,7 @@ int main(int argc, char *argv[]) {
                             float vel_r = 0;
                             float vel_d = 0.2;
                             if (move_status == MOVE_UP) vel_d = -0.2;
+                            if (slow_down) vel_d = vel_d * 0.5f;
                             if (fc_prx_too_close) {
                                 vel_f = -0.1;
                                 auto txt = std_msgs::msg::String();
