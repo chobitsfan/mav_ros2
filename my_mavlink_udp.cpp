@@ -108,6 +108,7 @@ int main(int argc, char *argv[]) {
     };
     int mission_idx = -1;
     float cur_vio_x = 0, cur_vio_y = 0, cur_vio_z = 0;
+    float wp_vio_x = 0, wp_vio_y = 0, wp_vio_z = 0;
     struct lines_3d detected_structs;
     struct lines_3d last_detected_structs;
     int navi_status = SEARCH_STRUCT_CROSS;
@@ -257,17 +258,17 @@ int main(int argc, char *argv[]) {
                                     mission_idx = 0;
                                     navi_status = SEARCH_STRUCT_CROSS;
                                     move_status = HOVER;
-                                } /*else {
+                                } else {
                                     float x_diff = cur_vio_x - wp_vio_x;
                                     float y_diff = cur_vio_y - wp_vio_y;
                                     float z_diff = cur_vio_z - wp_vio_z;
                                     if ((x_diff * x_diff + y_diff * y_diff + z_diff * z_diff) > (MAX_WP_DIST_M * MAX_WP_DIST_M)) {
-                                        printf("exceed MAX_WP_DIST_M, abort mission\n");
-                                        mavlink_msg_set_mode_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, 9); //land
+                                        printf("exceed MAX_WP_DIST_M, pause\n");
+                                        mavlink_msg_set_mode_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, COPTER_MODE_BRAKE);
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
                                         write(uart_fd, buf, len);
                                     }
-                                }*/
+                                }
                             } else {
                                 mission_idx = -1;
                             }
@@ -350,6 +351,9 @@ int main(int argc, char *argv[]) {
                                     /*mavlink_msg_play_tune_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, "MFT200L8G>C3", "");
                                     len = mavlink_msg_to_send_buffer(buf, &msg);
                                     write(uart_fd, buf, len);*/
+                                    wp_vio_x = cur_vio_x;
+                                    wp_vio_y = cur_vio_y;
+                                    wp_vio_z = cur_vio_z;
                                 }
                             }
                         } else if (navi_status == PASS_STRUCT_CROSS) {
@@ -368,7 +372,7 @@ int main(int argc, char *argv[]) {
                             float vel_f = 0;
                             uint16_t type_mask = 0xdc7;
                             if (move_status == MOVE_LEFT) vel_r = -0.2;
-                            if (slow_down) vel_r = vel_r * 0.5f;
+                            if (slow_down) vel_r = vel_r * 0.6f;
                             if (detected_structs.hori_x == 0) {
                             } else {
                                 float t = -detected_structs.hori_y / detected_structs.hori_vy;
@@ -429,6 +433,12 @@ int main(int argc, char *argv[]) {
                                 }
                             }
                             if (yaw_adj_cd > 0) type_mask = 0x9c7;
+                            if (fc_prx_too_close) {
+                                vel_f = -0.1;
+                                auto txt = std_msgs::msg::String();
+                                txt.data = "sonar: too close, move away";
+                                navi_pub->publish(txt);
+                            }
                             gettimeofday(&tv, NULL);
                             mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+tv.tv_usec*0.001, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, type_mask, 0, 0, 0, vel_f, vel_r, vel_d, 0, 0, 0, tgt_yaw, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -446,11 +456,11 @@ int main(int argc, char *argv[]) {
                             float vel_r = 0;
                             float vel_d = 0.2;
                             if (move_status == MOVE_UP) vel_d = -0.2;
-                            if (slow_down) vel_d = vel_d * 0.5f;
+                            if (slow_down) vel_d = vel_d * 0.6f;
                             if (fc_prx_too_close) {
                                 vel_f = -0.1;
                                 auto txt = std_msgs::msg::String();
-                                txt.data = "too close, move away";
+                                txt.data = "sonar: too close, move away";
                                 navi_pub->publish(txt);
                             }
                             gettimeofday(&tv, NULL);
@@ -466,7 +476,7 @@ int main(int argc, char *argv[]) {
                             twist_stamped.twist.linear.z = -vel_d;
                             vel_pub->publish(twist_stamped);
                         } else if (move_status == LAND) {
-                            mavlink_msg_set_mode_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, 9); //land
+                            mavlink_msg_set_mode_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, COPTER_MODE_LAND);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd, buf, len);
                         }
