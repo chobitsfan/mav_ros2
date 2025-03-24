@@ -24,6 +24,7 @@
 #include "geometry_msgs/msg/point.hpp"
 #include "sensor_msgs/msg/range.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
+#include "sensor_msgs/msg/point_cloud.hpp"
 
 // ROS coordinate system, x axis = vehicle front
 
@@ -48,6 +49,9 @@
 
 struct timeval tv_intersect = {0, 0};
 float intersect_cog[2] = {0, 0};
+int uart_fd;
+unsigned char buf[1024];
+uint8_t mav_sysid = 0;
 
 struct __attribute__((packed)) lines_3d {
 //where (vx, vy, vz) is a normalized vector collinear to the line and (x0, y0, z0) is a point on the line.
@@ -70,19 +74,30 @@ void intersect_callback(const geometry_msgs::msg::Point::SharedPtr msg) {
     gettimeofday(&tv_intersect, NULL);
 }
 
+void obs_callback(const sensor_msgs::msg::PointCloud::SharedPtr pc_msg) {
+    mavlink_message_t msg;
+    unsigned int len;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    uint32_t ts_ms = tv.tv_sec*1000+(int)(tv.tv_usec*0.001);
+    for (const auto &p : pc_msg->points) {
+        mavlink_msg_obstacle_distance_3d_pack(mav_sysid, MY_COMP_ID, &msg, ts_ms, MAV_DISTANCE_SENSOR_INFRARED, MAV_FRAME_BODY_FRD, UINT16_MAX, p.x, -p.y, -p.z, 0.02, 4);
+        len = mavlink_msg_to_send_buffer(buf, &msg);
+        write(uart_fd, buf, len);
+    }
+}
+
 int main(int argc, char *argv[]) {
     struct pollfd pfds[MY_NUM_PFDS];
     struct timeval tv;
-    int retval, uart_fd;
+    int retval;
     unsigned int len;
-    unsigned char buf[1024];
     ssize_t avail;
     mavlink_status_t status;
     mavlink_message_t msg;
     // Create new termios struc, we call it 'tty' for convention
     struct termios tty;
     struct sockaddr_un ipc_addr, ipc_addr2;
-    uint8_t mav_sysid = 0;
     int ipc_fd, ipc_fd2;
     int parse_error = 0, packet_rx_drop_count = 0;
     bool att_rcved = false;
@@ -124,6 +139,7 @@ int main(int argc, char *argv[]) {
     bool dist_sensor_rcved = false;
     bool fc_prx_too_close = false;
     bool slow_down = false;
+    bool tgt_not_set = true;
 
     memset(&last_detected_structs, 0, sizeof(last_detected_structs));
 
@@ -135,6 +151,7 @@ int main(int argc, char *argv[]) {
     auto vel_pub = node->create_publisher<geometry_msgs::msg::TwistStamped>("tgt_vel", 1);
     auto tts_pub = node->create_publisher<std_msgs::msg::String>("tts", 1);
     auto intersec_sub = node->create_subscription<geometry_msgs::msg::Point>("templateCOG", 1, intersect_callback);
+    auto obs_sub = node->create_subscription<sensor_msgs::msg::PointCloud>("obstacles", 1, obs_callback);
 
     auto rng = sensor_msgs::msg::Range();
     rng.header.frame_id = "body";
@@ -251,36 +268,15 @@ int main(int argc, char *argv[]) {
                                 write(uart_fd, buf, len);
                             }
                             if (hb.custom_mode == COPTER_MODE_GUIDED) {
-                                if (mission_idx == -1) {
-                                    auto txt = std_msgs::msg::String();
-                                    txt.data = "mission start";
-                                    navi_pub->publish(txt);
-                                    mission_idx = 0;
-                                    navi_status = SEARCH_STRUCT_CROSS;
-                                    move_status = HOVER;
-                                } else {
-                                    float x_diff = cur_vio_x - wp_vio_x;
-                                    float y_diff = cur_vio_y - wp_vio_y;
-                                    float z_diff = cur_vio_z - wp_vio_z;
-                                    if ((x_diff * x_diff + y_diff * y_diff + z_diff * z_diff) > (MAX_WP_DIST_M * MAX_WP_DIST_M)) {
-                                        printf("exceed MAX_WP_DIST_M, pause\n");
-                                        mavlink_msg_set_mode_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, COPTER_MODE_BRAKE);
-                                        len = mavlink_msg_to_send_buffer(buf, &msg);
-                                        write(uart_fd, buf, len);
-                                    }
+                                if (tgt_not_set) {
+                                    tgt_not_set = false;
+                                    gettimeofday(&tv, NULL);
+                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+(int)(tv.tv_usec*0.001), mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xdf8, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                                    len = mavlink_msg_to_send_buffer(buf, &msg);
+                                    write(uart_fd, buf, len);
                                 }
                             } else {
-                                mission_idx = -1;
-                            }
-                            if (!att_rcved) {
-                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_ATTITUDE, 100'000, 0, 0, 0, 0, 0);
-                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                write(uart_fd, buf, len);
-                            }
-                            if (!dist_sensor_rcved) {
-                                mavlink_msg_command_long_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_DISTANCE_SENSOR, 100'000, 0, 0, 0, 0, 0);
-                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                write(uart_fd, buf, len);
+                                tgt_not_set = true;
                             }
                         } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
                             mavlink_statustext_t txt;
