@@ -133,8 +133,8 @@ int main(int argc, char *argv[]) {
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("mavlink_udp");
     //auto navi_pub = node->create_publisher<std_msgs::msg::String>("navi", 1);
-    auto avd_dir_sub = node->create_subscription<geometry_msgs::msg::TwistStamped>("avoid_direction", 1, avd_callback);
-    auto odom_sub = node->create_subscription<nav_msgs::msg::Odometry>("odometry", 1, odom_callback);
+    auto avd_dir_sub = node->create_subscription<geometry_msgs::msg::TwistStamped>("avoid_direction", rclcpp::QoS(1).best_effort().durability_volatile(), avd_callback);
+    auto odom_sub = node->create_subscription<nav_msgs::msg::Odometry>("odometry", rclcpp::QoS(1).best_effort().durability_volatile(), odom_callback);
     //auto pos_pub = node->create_publisher<geometry_msgs::msg::Point>("pose", 1);
     auto uart_timer = node->create_wall_timer(10ms, timer_callback);
 
