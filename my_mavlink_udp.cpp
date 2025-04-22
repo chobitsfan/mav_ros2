@@ -15,7 +15,7 @@
 #include "std_msgs/msg/string.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "visualization_msgs/msg/marker.hpp"
-#include "geometry_msgs/msg/point.hpp"
+#include "geometry_msgs/msg/point_stamped.hpp"
 #include "sensor_msgs/msg/range.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "sensor_msgs/msg/point_cloud.hpp"
@@ -28,123 +28,135 @@ using namespace std::chrono_literals;
 #define MY_COMP_ID 191
 #define MY_NUM_PFDS 1
 
-int uart_fd;
-unsigned char buf[1024];
-uint8_t mav_sysid = 0;
-bool in_guided = false;
-
 float angle_between_vectors(float v1x, float v1y, float v1z, float v2x, float v2y, float v2z) {
     return acosf((v1x * v2x + v1y * v2y + v1z * v2z) / (sqrtf(v1x * v1x + v1y * v1y + v1z * v1z) * sqrtf(v2x * v2x + v2y * v2y + v2z * v2z)));
 }
 
-void timer_callback(rclcpp::Publisher<geometry_msgs::msg::Point>::SharedPtr tgt_p_pub) {
-    static int parse_error = 0;
-    static int packet_rx_drop_count = 0;
-    struct timeval tv;
-    unsigned int len;
-    ssize_t avail;
-    mavlink_status_t status;
-    mavlink_message_t msg;
+class ObsAvdNode : public rclcpp::Node {
+    public:
+        ObsAvdNode(int uart_fd) : Node("obs_avd"), uart_fd_(uart_fd) {
+            avd_dir_sub_ = this->create_subscription<geometry_msgs::msg::TwistStamped>("avoid_direction", rclcpp::QoS(1).best_effort().durability_volatile(), [this](const geometry_msgs::msg::TwistStamped::SharedPtr twist_msg) { avd_callback(twist_msg); });
+            odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>("odometry", rclcpp::QoS(1).best_effort().durability_volatile(), [this](const nav_msgs::msg::Odometry::SharedPtr odom_msg) { odom_callback(odom_msg); });
+            tgt_p_pub_ = this->create_publisher<geometry_msgs::msg::PointStamped>("target_point", rclcpp::QoS(1).best_effort().durability_volatile());
+            uart_timer_ = this->create_wall_timer(10ms, [this](){ timer_callback(); });
+        }
 
-    memset(&status, 0, sizeof(status));
-
-    avail = read(uart_fd, buf, 1024);
-    for (int i = 0; i < avail; i++) {
-        if (mavlink_parse_char(0, buf[i], &msg, &status)) {
-            if (parse_error != status.parse_error) {
-                parse_error = status.parse_error;
-                printf("mavlink parse_error %d\n", parse_error);
-            }
-            if (packet_rx_drop_count != status.packet_rx_drop_count) {
-                packet_rx_drop_count = status.packet_rx_drop_count;
-                printf("mavlink drop %d\n", packet_rx_drop_count);
-            }
-            if (msg.sysid == 255) continue;
-            //printf("recv msg ID %d, seq %d\n", msg.msgid, msg.seq);
-            if (msg.msgid == MAVLINK_MSG_ID_HEARTBEAT) {
-                mavlink_heartbeat_t hb;
-                mavlink_msg_heartbeat_decode(&msg, &hb);
-                if (msg.sysid != mav_sysid) {
-                    mav_sysid = msg.sysid;
-                    printf("found MAV %d\n", msg.sysid);
-
-                    gettimeofday(&tv, NULL);
-                    mavlink_msg_system_time_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000000+tv.tv_usec, 0);
-                    len = mavlink_msg_to_send_buffer(buf, &msg);
-                    write(uart_fd, buf, len);
-
-                    mavlink_msg_set_gps_global_origin_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 247749434, 1210443077, 100000, tv.tv_sec*1000000+tv.tv_usec);
-                    len = mavlink_msg_to_send_buffer(buf, &msg);
-                    write(uart_fd, buf, len);
-                }
-                if (hb.custom_mode == COPTER_MODE_GUIDED) {
-                    if (!in_guided) {
-                        geometry_msgs::msg::Point p;
-                        p.x = 10;
-                        p.y = 0;
-                        p.z = 0;
-                        tgt_p_pub->publish(p);
-                    }
-                    in_guided = true;
-                } else {
-                    in_guided = false;
-                }
-            } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
-                mavlink_statustext_t txt;
-                mavlink_msg_statustext_decode(&msg, &txt);
-                printf("fc: %s\n", txt.text);
+    private:
+        void odom_callback(const nav_msgs::msg::Odometry::SharedPtr odom_msg) {
+            struct timeval tv;
+            mavlink_message_t msg;
+            float covar[21] = {0};
+            float q[4];
+            unsigned int len;
+            geometry_msgs::msg::Pose *pose = &odom_msg->pose.pose;
+            geometry_msgs::msg::Vector3 *v = &odom_msg->twist.twist.linear;
+            if (mav_sysid != 0) {
+                q[0] = pose->orientation.w;
+                q[1] = pose->orientation.x;
+                q[2] = -pose->orientation.y;
+                q[3] = -pose->orientation.z;
+                gettimeofday(&tv, NULL);
+                mavlink_msg_att_pos_mocap_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000000+tv.tv_usec, q, pose->position.x, -pose->position.y, -pose->position.z, covar);
+                len = mavlink_msg_to_send_buffer(buf, &msg);
+                write(uart_fd_, buf, len);
+                mavlink_msg_vision_speed_estimate_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000000+tv.tv_usec, v->x, -v->y, -v->z, covar, 0);
+                len = mavlink_msg_to_send_buffer(buf, &msg);
+                write(uart_fd_, buf, len);
             }
         }
-    }
-}
 
-void avd_callback(const geometry_msgs::msg::TwistStamped::SharedPtr twist_msg) {
-    struct timeval tv;
-    mavlink_message_t msg;
-    unsigned int len;
-    if (in_guided) {
-        gettimeofday(&tv, NULL);
-        mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+(uint32_t)(tv.tv_usec*0.001), mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, twist_msg->twist.linear.x, -twist_msg->twist.linear.y, -twist_msg->twist.linear.z, 0, 0, 0, 0, 0);
-        len = mavlink_msg_to_send_buffer(buf, &msg);
-        write(uart_fd, buf, len);
-    }
-}
+        void avd_callback(const geometry_msgs::msg::TwistStamped::SharedPtr twist_msg) {
+            struct timeval tv;
+            mavlink_message_t msg;
+            unsigned int len;
+            if (in_guided) {
+                gettimeofday(&tv, NULL);
+                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+(uint32_t)(tv.tv_usec*0.001), mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, twist_msg->twist.linear.x, -twist_msg->twist.linear.y, -twist_msg->twist.linear.z, 0, 0, 0, 0, 0);
+                len = mavlink_msg_to_send_buffer(buf, &msg);
+                write(uart_fd_, buf, len);
+            }
+        }
 
-void odom_callback(const nav_msgs::msg::Odometry::SharedPtr odom_msg) {
-    struct timeval tv;
-    mavlink_message_t msg;
-    float covar[21] = {0};
-    float q[4];
-    unsigned int len;
-    geometry_msgs::msg::Pose *pose = &odom_msg->pose.pose;
-    geometry_msgs::msg::Vector3 *v = &odom_msg->twist.twist.linear;
-    if (mav_sysid != 0) {
-        q[0] = pose->orientation.w;
-        q[1] = pose->orientation.x;
-        q[2] = -pose->orientation.y;
-        q[3] = -pose->orientation.z;
-        gettimeofday(&tv, NULL);
-        mavlink_msg_att_pos_mocap_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000000+tv.tv_usec, q, pose->position.x, -pose->position.y, -pose->position.z, covar);
-        len = mavlink_msg_to_send_buffer(buf, &msg);
-        write(uart_fd, buf, len);
-        mavlink_msg_vision_speed_estimate_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000000+tv.tv_usec, v->x, -v->y, -v->z, covar, 0);
-        len = mavlink_msg_to_send_buffer(buf, &msg);
-        write(uart_fd, buf, len);
-    }
-}
+        void timer_callback() {
+            static int parse_error = 0;
+            static int packet_rx_drop_count = 0;
+            struct timeval tv;
+            unsigned int len;
+            ssize_t avail;
+            mavlink_status_t status;
+            mavlink_message_t msg;
+
+            memset(&status, 0, sizeof(status));
+
+            avail = read(uart_fd_, buf, 1024);
+            for (int i = 0; i < avail; i++) {
+                if (mavlink_parse_char(0, buf[i], &msg, &status)) {
+                    if (parse_error != status.parse_error) {
+                        parse_error = status.parse_error;
+                        printf("mavlink parse_error %d\n", parse_error);
+                    }
+                    if (packet_rx_drop_count != status.packet_rx_drop_count) {
+                        packet_rx_drop_count = status.packet_rx_drop_count;
+                        printf("mavlink drop %d\n", packet_rx_drop_count);
+                    }
+                    if (msg.sysid == 255) continue;
+                    //printf("recv msg ID %d, seq %d\n", msg.msgid, msg.seq);
+                    if (msg.msgid == MAVLINK_MSG_ID_HEARTBEAT) {
+                        mavlink_heartbeat_t hb;
+                        mavlink_msg_heartbeat_decode(&msg, &hb);
+                        if (msg.sysid != mav_sysid) {
+                            mav_sysid = msg.sysid;
+                            printf("found MAV %d\n", msg.sysid);
+
+                            gettimeofday(&tv, NULL);
+                            mavlink_msg_system_time_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000000+tv.tv_usec, 0);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd_, buf, len);
+
+                            mavlink_msg_set_gps_global_origin_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 247749434, 1210443077, 100000, tv.tv_sec*1000000+tv.tv_usec);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd_, buf, len);
+                        }
+                        if (hb.custom_mode == COPTER_MODE_GUIDED) {
+                            if (!in_guided) {
+                                geometry_msgs::msg::PointStamped p;
+                                p.header.frame_id = "body";
+                                p.header.stamp = this->get_clock()->now();
+                                p.point.x = 10;
+                                p.point.y = 0;
+                                p.point.z = 0;
+                                tgt_p_pub_->publish(p);
+                            }
+                            in_guided = true;
+                        } else {
+                            in_guided = false;
+                        }
+                    } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
+                        mavlink_statustext_t txt;
+                        mavlink_msg_statustext_decode(&msg, &txt);
+                        printf("fc: %s\n", txt.text);
+                    }
+                }
+            }
+        }
+
+        int uart_fd_;
+        unsigned char buf[1024];
+        uint8_t mav_sysid = 0;
+        bool in_guided = false;
+        rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr tgt_p_pub_;
+        rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr avd_dir_sub_;
+        rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+        rclcpp::TimerBase::SharedPtr uart_timer_;
+};
 
 int main(int argc, char *argv[]) {
     // Create new termios struc, we call it 'tty' for convention
     struct termios tty;
 
     rclcpp::init(argc, argv);
-    auto node = rclcpp::Node::make_shared("mavlink_udp");
-    //auto navi_pub = node->create_publisher<std_msgs::msg::String>("navi", 1);
-    auto avd_dir_sub = node->create_subscription<geometry_msgs::msg::TwistStamped>("avoid_direction", rclcpp::QoS(1).best_effort().durability_volatile(), avd_callback);
-    auto odom_sub = node->create_subscription<nav_msgs::msg::Odometry>("odometry", rclcpp::QoS(1).best_effort().durability_volatile(), odom_callback);
-    auto tgt_p_pub = node->create_publisher<geometry_msgs::msg::Point>("target_point", rclcpp::QoS(1).best_effort().durability_volatile());
-    auto uart_timer = node->create_wall_timer(10ms, [tgt_p_pub]() {timer_callback(tgt_p_pub);});
 
+    int uart_fd;
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY | O_NONBLOCK);
     else
@@ -183,13 +195,13 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    printf("hello\n");
+    printf("uart ok\n");
 
+    auto node = std::make_shared<ObsAvdNode>(uart_fd);
     rclcpp::spin(node);
+    rclcpp::shutdown();
 
     close(uart_fd);
-
-    rclcpp::shutdown();
 
     printf("bye\n");
 
