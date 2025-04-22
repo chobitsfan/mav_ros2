@@ -37,7 +37,7 @@ float angle_between_vectors(float v1x, float v1y, float v1z, float v2x, float v2
     return acosf((v1x * v2x + v1y * v2y + v1z * v2z) / (sqrtf(v1x * v1x + v1y * v1y + v1z * v1z) * sqrtf(v2x * v2x + v2y * v2y + v2z * v2z)));
 }
 
-void timer_callback() {
+void timer_callback(rclcpp::Publisher<geometry_msgs::msg::Point>::SharedPtr tgt_p_pub) {
     static int parse_error = 0;
     static int packet_rx_drop_count = 0;
     struct timeval tv;
@@ -78,6 +78,13 @@ void timer_callback() {
                     write(uart_fd, buf, len);
                 }
                 if (hb.custom_mode == COPTER_MODE_GUIDED) {
+                    if (!in_guided) {
+                        geometry_msgs::msg::Point p;
+                        p.x = 10;
+                        p.y = 0;
+                        p.z = 0;
+                        tgt_p_pub->publish(p);
+                    }
                     in_guided = true;
                 } else {
                     in_guided = false;
@@ -135,8 +142,8 @@ int main(int argc, char *argv[]) {
     //auto navi_pub = node->create_publisher<std_msgs::msg::String>("navi", 1);
     auto avd_dir_sub = node->create_subscription<geometry_msgs::msg::TwistStamped>("avoid_direction", rclcpp::QoS(1).best_effort().durability_volatile(), avd_callback);
     auto odom_sub = node->create_subscription<nav_msgs::msg::Odometry>("odometry", rclcpp::QoS(1).best_effort().durability_volatile(), odom_callback);
-    //auto pos_pub = node->create_publisher<geometry_msgs::msg::Point>("pose", 1);
-    auto uart_timer = node->create_wall_timer(10ms, timer_callback);
+    auto tgt_p_pub = node->create_publisher<geometry_msgs::msg::Point>("target_point", rclcpp::QoS(1).best_effort().durability_volatile());
+    auto uart_timer = node->create_wall_timer(10ms, [tgt_p_pub]() {timer_callback(tgt_p_pub);});
 
     if (argc > 1)
         uart_fd = open(argv[1], O_RDWR| O_NOCTTY | O_NONBLOCK);
