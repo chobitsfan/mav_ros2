@@ -32,9 +32,9 @@ float angle_between_vectors(float v1x, float v1y, float v1z, float v2x, float v2
     return acosf((v1x * v2x + v1y * v2y + v1z * v2z) / (sqrtf(v1x * v1x + v1y * v1y + v1z * v1z) * sqrtf(v2x * v2x + v2y * v2y + v2z * v2z)));
 }
 
-class ObsAvdNode : public rclcpp::Node {
+class MavRosNode : public rclcpp::Node {
     public:
-        ObsAvdNode(int uart_fd) : Node("obs_avd"), uart_fd_(uart_fd) {
+        MavRosNode(int uart_fd) : Node("mavlink_ros"), uart_fd_(uart_fd) {
             avd_dir_sub_ = this->create_subscription<geometry_msgs::msg::TwistStamped>("avoid_direction", rclcpp::QoS(1).best_effort().durability_volatile(), [this](const geometry_msgs::msg::TwistStamped::SharedPtr twist_msg) { avd_callback(twist_msg); });
             odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>("odometry", rclcpp::QoS(1).best_effort().durability_volatile(), [this](const nav_msgs::msg::Odometry::SharedPtr odom_msg) { odom_callback(odom_msg); });
             tgt_p_pub_ = this->create_publisher<geometry_msgs::msg::PointStamped>("target_point", rclcpp::QoS(1).best_effort().durability_volatile());
@@ -197,7 +197,7 @@ int main(int argc, char *argv[]) {
 
     printf("uart ok\n");
 
-    auto node = std::make_shared<ObsAvdNode>(uart_fd);
+    auto node = std::make_shared<MavRosNode>(uart_fd);
     rclcpp::spin(node);
     rclcpp::shutdown();
 
