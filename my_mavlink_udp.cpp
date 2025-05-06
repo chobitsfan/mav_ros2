@@ -129,6 +129,15 @@ class MavRosNode : public rclcpp::Node {
                             }
                             in_guided = true;
                         } else {
+                            if (in_guided) {
+                                geometry_msgs::msg::PointStamped p;
+                                p.header.frame_id = "body";
+                                p.header.stamp = this->get_clock()->now();
+                                p.point.x = 0;
+                                p.point.y = 0;
+                                p.point.z = 0;
+                                tgt_p_pub_->publish(p);
+                            }
                             in_guided = false;
                         }
                     } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
