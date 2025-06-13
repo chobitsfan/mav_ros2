@@ -26,18 +26,14 @@ using namespace std::chrono_literals;
 // ROS coordinate system, x axis = vehicle front
 
 #define MY_COMP_ID 191
-#define MY_NUM_PFDS 1
-
-float angle_between_vectors(float v1x, float v1y, float v1z, float v2x, float v2y, float v2z) {
-    return acosf((v1x * v2x + v1y * v2y + v1z * v2z) / (sqrtf(v1x * v1x + v1y * v1y + v1z * v1z) * sqrtf(v2x * v2x + v2y * v2y + v2z * v2z)));
-}
 
 class MavRosNode : public rclcpp::Node {
     public:
         MavRosNode(int uart_fd) : Node("mavlink_ros"), uart_fd_(uart_fd) {
-            avd_dir_sub_ = this->create_subscription<geometry_msgs::msg::TwistStamped>("avoid_direction", rclcpp::QoS(1).best_effort().durability_volatile(), [this](const geometry_msgs::msg::TwistStamped::SharedPtr twist_msg) { avd_callback(twist_msg); });
-            odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>("odometry", rclcpp::QoS(1).best_effort().durability_volatile(), [this](const nav_msgs::msg::Odometry::SharedPtr odom_msg) { odom_callback(odom_msg); });
-            tgt_p_pub_ = this->create_publisher<geometry_msgs::msg::PointStamped>("target_point", rclcpp::QoS(1).best_effort().durability_volatile());
+            odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+                "odometry",
+                rclcpp::QoS(1).best_effort().durability_volatile(),
+                std::bind(&MavRosNode::odom_callback, this, std::placeholders::_1));
             uart_timer_ = this->create_wall_timer(10ms, [this](){ timer_callback(); });
         }
 
@@ -60,18 +56,6 @@ class MavRosNode : public rclcpp::Node {
                 len = mavlink_msg_to_send_buffer(buf, &msg);
                 write(uart_fd_, buf, len);
                 mavlink_msg_vision_speed_estimate_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000000+tv.tv_usec, v->x, -v->y, -v->z, covar, 0);
-                len = mavlink_msg_to_send_buffer(buf, &msg);
-                write(uart_fd_, buf, len);
-            }
-        }
-
-        void avd_callback(const geometry_msgs::msg::TwistStamped::SharedPtr twist_msg) {
-            struct timeval tv;
-            mavlink_message_t msg;
-            unsigned int len;
-            if (in_guided) {
-                gettimeofday(&tv, NULL);
-                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000+(uint32_t)(tv.tv_usec*0.001), mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xdc7, 0, 0, 0, twist_msg->twist.linear.x, -twist_msg->twist.linear.y, -twist_msg->twist.linear.z, 0, 0, 0, 0, 0);
                 len = mavlink_msg_to_send_buffer(buf, &msg);
                 write(uart_fd_, buf, len);
             }
@@ -117,29 +101,6 @@ class MavRosNode : public rclcpp::Node {
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
                         }
-                        if (hb.custom_mode == COPTER_MODE_GUIDED) {
-                            if (!in_guided) {
-                                geometry_msgs::msg::PointStamped p;
-                                p.header.frame_id = "body";
-                                p.header.stamp = this->get_clock()->now();
-                                p.point.x = 10;
-                                p.point.y = 0;
-                                p.point.z = 0;
-                                tgt_p_pub_->publish(p);
-                            }
-                            in_guided = true;
-                        } else {
-                            if (in_guided) {
-                                geometry_msgs::msg::PointStamped p;
-                                p.header.frame_id = "body";
-                                p.header.stamp = this->get_clock()->now();
-                                p.point.x = 0;
-                                p.point.y = 0;
-                                p.point.z = 0;
-                                tgt_p_pub_->publish(p);
-                            }
-                            in_guided = false;
-                        }
                     } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
                         mavlink_statustext_t txt;
                         mavlink_msg_statustext_decode(&msg, &txt);
@@ -152,9 +113,6 @@ class MavRosNode : public rclcpp::Node {
         int uart_fd_;
         unsigned char buf[1024];
         uint8_t mav_sysid = 0;
-        bool in_guided = false;
-        rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr tgt_p_pub_;
-        rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr avd_dir_sub_;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
 };

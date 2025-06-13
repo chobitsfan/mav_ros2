@@ -1,7 +1,10 @@
-An utility acting as a bridge between Ardupilot and a modified version of VINS-Fusion
+An utility acting as a bridge between Ardupilot and ROS2
 
 Build
 ```
     git submodule update --init --recursive
-    ./build_it
+    mkdir build
+    cd build
+    cmake ..
+    make
 ```
