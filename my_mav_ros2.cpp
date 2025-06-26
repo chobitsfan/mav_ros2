@@ -55,8 +55,9 @@ class MavRosNode : public rclcpp::Node {
                 //uint64_t now_ms = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
                 //uint64_t odom_ms = odom_msg->header.stamp.sec * 1000 + odom_msg->header.stamp.nanosec / 1000000;
                 //int8_t delay_ms = now_ms - odom_ms;
-                uint64_t now_us = ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
-                mavlink_msg_odometry_pack(mav_sysid, MY_COMP_ID, &msg, now_us, MAV_FRAME_LOCAL_NED, MAV_FRAME_LOCAL_NED, pose->position.x, -pose->position.y, -pose->position.z, q,
+                //uint64_t now_us = ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+                int64_t odom_us = odom_msg->header.stamp.sec * 1000000 + odom_msg->header.stamp.nanosec / 1000;
+                mavlink_msg_odometry_pack(mav_sysid, MY_COMP_ID, &msg, odom_us, MAV_FRAME_LOCAL_NED, MAV_FRAME_LOCAL_NED, pose->position.x, -pose->position.y, -pose->position.z, q,
                     v->x, -v->y, -v->z, INFINITY, INFINITY, INFINITY, covar, covar, 0, MAV_ESTIMATOR_TYPE_NAIVE, 0);
                 len = mavlink_msg_to_send_buffer(buf, &msg);
                 write(uart_fd_, buf, len);
@@ -116,6 +117,14 @@ class MavRosNode : public rclcpp::Node {
                         memcpy(txt_buf, txt.text, 50);
                         printf("fc: %s\n", txt_buf);
                     } else if (msg.msgid == MAVLINK_MSG_ID_TIMESYNC) {
+                        struct timespec ts;
+                        mavlink_timesync_t sync;
+                        mavlink_msg_timesync_decode(&msg, &sync);
+                        if (sync.tc1 == 0) {
+                            clock_gettime(CLOCK_MONOTONIC, &ts);
+                            int64_t ns = ts.tv_sec * 1000000000 + ts.tv_nsec;
+                            mavlink_msg_timesync_pack(mav_sysid, MY_COMP_ID, &msg, ns, sync.tc1, mav_sysid, 1);
+                        }
                         /*gettimeofday(&tv, NULL);
                         mavlink_msg_system_time_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000000+tv.tv_usec, 0);
                         len = mavlink_msg_to_send_buffer(buf, &msg);
