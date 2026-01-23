@@ -26,8 +26,6 @@ using namespace std::chrono_literals;
 
 // ROS coordinate system, x axis = vehicle front
 
-#define MY_COMP_ID MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY
-
 class MavRosNode : public rclcpp::Node {
     public:
         MavRosNode(int uart_fd) : Node("mavlink_ros"), uart_fd_(uart_fd) {
@@ -61,25 +59,19 @@ class MavRosNode : public rclcpp::Node {
                 q[3] = -att.z;
                 if (is_apm && time_offset_ns != 0) {
                     int64_t odom_fc_us = (odom_msg->header.stamp.sec * 1000000000LL + odom_msg->header.stamp.nanosec - pico_pi_t_offset - time_offset_ns) / 1000;
-                    mavlink_msg_att_pos_mocap_pack(mav_sysid, MY_COMP_ID, &msg, odom_fc_us, q, pos.x, -pos.y, -pos.z, covar);
+                    mavlink_msg_att_pos_mocap_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, q, pos.x, -pos.y, -pos.z, covar);
                     len = mavlink_msg_to_send_buffer(buf, &msg);
                     write(uart_fd_, buf, len);
-                    mavlink_msg_vision_speed_estimate_pack(mav_sysid, MY_COMP_ID, &msg, odom_fc_us, v.x, -v.y, -v.z, covar, 0);
+                    mavlink_msg_vision_speed_estimate_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, v.x, -v.y, -v.z, covar, 0);
                     len = mavlink_msg_to_send_buffer(buf, &msg);
                     write(uart_fd_, buf, len);
                 } else {
                     int64_t odom_us = odom_msg->header.stamp.sec * 1000000 + odom_msg->header.stamp.nanosec / 1000;
-                    mavlink_msg_odometry_pack(mav_sysid, MY_COMP_ID, &msg, odom_us, MAV_FRAME_LOCAL_NED, MAV_FRAME_LOCAL_NED, pos.x, -pos.y, -pos.z, q,
+                    mavlink_msg_odometry_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_us, MAV_FRAME_LOCAL_NED, MAV_FRAME_LOCAL_NED, pos.x, -pos.y, -pos.z, q,
                         v.x, -v.y, -v.z, INFINITY, INFINITY, INFINITY, covar, covar, 0, MAV_ESTIMATOR_TYPE_NAIVE, 0);
                     len = mavlink_msg_to_send_buffer(buf, &msg);
                     write(uart_fd_, buf, len);
                 }
-                /*mavlink_msg_att_pos_mocap_pack(mav_sysid, MY_COMP_ID, &msg, now_us, q, pose->position.x, -pose->position.y, -pose->position.z, covar);
-                len = mavlink_msg_to_send_buffer(buf, &msg);
-                write(uart_fd_, buf, len);
-                mavlink_msg_vision_speed_estimate_pack(mav_sysid, MY_COMP_ID, &msg, now_us, v->x, -v->y, -v->z, covar, 0);
-                len = mavlink_msg_to_send_buffer(buf, &msg);
-                write(uart_fd_, buf, len);*/
             }
         }
 
@@ -114,12 +106,12 @@ class MavRosNode : public rclcpp::Node {
                             mav_sysid = msg.sysid;
                             printf("found MAV %d\n", msg.sysid);
 
-                            mavlink_msg_heartbeat_pack(mav_sysid, MY_COMP_ID, &msg, MAV_TYPE_ONBOARD_CONTROLLER, MAV_AUTOPILOT_INVALID, 0, 0, 0);
+                            mavlink_msg_heartbeat_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, MAV_TYPE_ONBOARD_CONTROLLER, MAV_AUTOPILOT_INVALID, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
 
                             /*gettimeofday(&tv, NULL);
-                            mavlink_msg_set_gps_global_origin_pack(mav_sysid, MY_COMP_ID, &msg, mav_sysid, 247749434, 1210443077, 100000, tv.tv_sec*1000000+tv.tv_usec);
+                            mavlink_msg_set_gps_global_origin_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 247749434, 1210443077, 100000, tv.tv_sec*1000000+tv.tv_usec);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);*/
                         }
@@ -130,7 +122,7 @@ class MavRosNode : public rclcpp::Node {
                                 ts_cnt = 0;
                                 struct timespec tp;
                                 clock_gettime(CLOCK_MONOTONIC, &tp);
-                                mavlink_msg_timesync_pack(mav_sysid, MY_COMP_ID, &msg, 0, (int64_t)tp.tv_sec * 1000000000 + tp.tv_nsec, mav_sysid, 1);
+                                mavlink_msg_timesync_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, (int64_t)tp.tv_sec * 1000000000 + tp.tv_nsec, mav_sysid, 1);
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd_, buf, len);
                             }
@@ -151,10 +143,10 @@ class MavRosNode : public rclcpp::Node {
                         } else if (sync.tc1 == 0) {
                             clock_gettime(CLOCK_MONOTONIC, &ts);
                             int64_t ns = ts.tv_sec * 1000000000 + ts.tv_nsec;
-                            mavlink_msg_timesync_pack(mav_sysid, MY_COMP_ID, &msg, ns, sync.tc1, mav_sysid, 1);
+                            mavlink_msg_timesync_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, ns, sync.tc1, mav_sysid, 1);
                         }
                         /*gettimeofday(&tv, NULL);
-                        mavlink_msg_system_time_pack(mav_sysid, MY_COMP_ID, &msg, tv.tv_sec*1000000+tv.tv_usec, 0);
+                        mavlink_msg_system_time_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tv.tv_sec*1000000+tv.tv_usec, 0);
                         len = mavlink_msg_to_send_buffer(buf, &msg);
                         write(uart_fd_, buf, len);*/
                     }
