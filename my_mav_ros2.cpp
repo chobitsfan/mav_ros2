@@ -145,10 +145,15 @@ class MavRosNode : public rclcpp::Node {
                                 if (cur_wp < 0) {
                                     cur_wp = 0;
                                     printf("mission start\n");
+                                } else if (cur_wp >= (int)waypoints.size()) {
+                                    mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0);
+                                    len = mavlink_msg_to_send_buffer(buf, &msg);
+                                    write(uart_fd_, buf, len);
+                                    printf("mission complete, land\n");
                                 } else {
                                     struct timespec tp;
                                     clock_gettime(CLOCK_MONOTONIC, &tp);
-                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_NED, 0x0DF8, waypoints[cur_wp].x, waypoints[cur_wp].y, waypoints[cur_wp].z, 0, 0, 0, 0, 0, 0, 0, 0);
+                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_NED, 0x0DF8, waypoints[cur_wp].x, waypoints[cur_wp].y, cur_pos_d+0.1f, 0, 0, 0, 0, 0, 0, 0, 0);
                                     len = mavlink_msg_to_send_buffer(buf, &msg);
                                     write(uart_fd_, buf, len);
                                 }
@@ -183,12 +188,14 @@ class MavRosNode : public rclcpp::Node {
                         write(uart_fd_, buf, len);*/
                     } else if (msg.msgid == MAVLINK_MSG_ID_LOCAL_POSITION_NED) {
                         local_pos_rcved = true;
-                        if (cur_wp < (int)waypoints.size()) {
-                            mavlink_local_position_ned_t local_pos;
-                            mavlink_msg_local_position_ned_decode(&msg, &local_pos);
+                        mavlink_local_position_ned_t local_pos;
+                        mavlink_msg_local_position_ned_decode(&msg, &local_pos);
+                        cur_pos_d = local_pos.z;
+                        if (cur_wp >= 0 && cur_wp < (int)waypoints.size()) {
                             float dx = local_pos.x - waypoints[cur_wp].x;
                             float dy = local_pos.y - waypoints[cur_wp].y;
-                            if (dx * dx + dy * dy < 0.25) {
+                            if (dx * dx + dy * dy < 1) {
+                                printf("waypoint %d arrived\n", cur_wp);
                                 ++cur_wp;
                             }
                         }
@@ -205,9 +212,10 @@ class MavRosNode : public rclcpp::Node {
         int64_t pico_pi_t_offset = 0;
         int ts_cnt = 6;
         bool mode_need_vio = false;
-        std::array<MyWaypoint, 3> waypoints{{{6, 0, -1.2}, {6, -2, -1.2}, {0, 0, -1.2}}};
+        std::array<MyWaypoint, 6> waypoints{{{6, 0, -2.5}, {0, 3, -2.5}, {0, 0, -2.5}, {6, 0, -2.5}, {0, 3, -2.5}, {0, 0, -2.5}}};
         int cur_wp = -1;
         bool local_pos_rcved = false;
+        float cur_pos_d = 0;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
