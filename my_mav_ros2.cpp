@@ -46,29 +46,37 @@ class MavRosNode : public rclcpp::Node {
         }
         void odom_callback(const nav_msgs::msg::Odometry::UniquePtr odom_msg) {
             mavlink_message_t msg;
-            float covar[21] = {NAN};
+            float nan_cov[21] = {NAN};
             float q[4];
             unsigned int len;
             auto& att = odom_msg->pose.pose.orientation;
             auto& pos = odom_msg->pose.pose.position;
             auto& v = odom_msg->twist.twist.linear;
+            auto& cov = odom_msg->pose.covariance;
             if (mav_sysid != 0) {
                 q[0] = att.w;
                 q[1] = att.x;
                 q[2] = -att.y;
                 q[3] = -att.z;
                 if (is_apm && time_offset_ns != 0) {
-                    int64_t odom_fc_us = (odom_msg->header.stamp.sec * 1000000000LL + odom_msg->header.stamp.nanosec - pico_pi_t_offset - time_offset_ns) / 1000;
-                    mavlink_msg_att_pos_mocap_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, q, pos.x, -pos.y, -pos.z, covar);
-                    len = mavlink_msg_to_send_buffer(buf, &msg);
-                    write(uart_fd_, buf, len);
-                    mavlink_msg_vision_speed_estimate_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, v.x, -v.y, -v.z, covar, 0);
-                    len = mavlink_msg_to_send_buffer(buf, &msg);
-                    write(uart_fd_, buf, len);
+                    if (cov[0]+cov[7]+cov[14] > 4 && mode_need_vio) {
+                        mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0);
+                        len = mavlink_msg_to_send_buffer(buf, &msg);
+                        write(uart_fd_, buf, len);
+                        RCLCPP_WARN(this->get_logger(), "VIO pose uncertainty exceed threshold, force landing");
+                    } else {
+                        int64_t odom_fc_us = (odom_msg->header.stamp.sec * 1000000000LL + odom_msg->header.stamp.nanosec - pico_pi_t_offset - time_offset_ns) / 1000;
+                        mavlink_msg_att_pos_mocap_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, q, pos.x, -pos.y, -pos.z, nan_cov);
+                        len = mavlink_msg_to_send_buffer(buf, &msg);
+                        write(uart_fd_, buf, len);
+                        mavlink_msg_vision_speed_estimate_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, v.x, -v.y, -v.z, nan_cov, 0);
+                        len = mavlink_msg_to_send_buffer(buf, &msg);
+                        write(uart_fd_, buf, len);
+                    }
                 } else {
                     int64_t odom_us = odom_msg->header.stamp.sec * 1000000 + odom_msg->header.stamp.nanosec / 1000;
                     mavlink_msg_odometry_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_us, MAV_FRAME_LOCAL_NED, MAV_FRAME_LOCAL_NED, pos.x, -pos.y, -pos.z, q,
-                        v.x, -v.y, -v.z, INFINITY, INFINITY, INFINITY, covar, covar, 0, MAV_ESTIMATOR_TYPE_NAIVE, 0);
+                        v.x, -v.y, -v.z, INFINITY, INFINITY, INFINITY, nan_cov, nan_cov, 0, MAV_ESTIMATOR_TYPE_NAIVE, 0);
                     len = mavlink_msg_to_send_buffer(buf, &msg);
                     write(uart_fd_, buf, len);
                 }
@@ -126,6 +134,7 @@ class MavRosNode : public rclcpp::Node {
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd_, buf, len);
                             }
+                            if (hb.custom_mode == 3 || hb.custom_mode == 4 || hb.custom_mode == 5) mode_need_vio = true; else mode_need_vio = false;
                         }
                     } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
                         mavlink_statustext_t txt;
@@ -161,6 +170,7 @@ class MavRosNode : public rclcpp::Node {
         int64_t time_offset_ns = 0;
         int64_t pico_pi_t_offset = 0;
         int ts_cnt = 6;
+        bool mode_need_vio = false;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
