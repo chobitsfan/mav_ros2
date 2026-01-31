@@ -26,11 +26,20 @@ using namespace std::chrono_literals;
 
 // ROS coordinate system, x axis = vehicle front
 
-struct MyWaypoint {
+struct MyPoint {
     float x;
     float y;
     float z;
 };
+
+float angle_between(float v1_x, float v1_y, float v2_x, float v2_y) {
+    float angle1 = atan2f(v1_y, v1_x);
+    float angle2 = atan2f(v2_y, v2_x);
+    float diff = angle2 - angle1;
+    if (diff > M_PI) diff -= 2*M_PI;
+    if (diff < -M_PI) diff += 2*M_PI;
+    return diff;
+}
 
 class MavRosNode : public rclcpp::Node {
     public:
@@ -150,12 +159,6 @@ class MavRosNode : public rclcpp::Node {
                                     len = mavlink_msg_to_send_buffer(buf, &msg);
                                     write(uart_fd_, buf, len);
                                     printf("mission complete, land\n");
-                                } else {
-                                    struct timespec tp;
-                                    clock_gettime(CLOCK_MONOTONIC, &tp);
-                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_NED, 0x0DF8, waypoints[cur_wp].x, waypoints[cur_wp].y, cur_pos_d+0.1f, 0, 0, 0, 0, 0, 0, 0, 0);
-                                    len = mavlink_msg_to_send_buffer(buf, &msg);
-                                    write(uart_fd_, buf, len);
                                 }
                             } else cur_wp = -1;
                         }
@@ -190,13 +193,45 @@ class MavRosNode : public rclcpp::Node {
                         local_pos_rcved = true;
                         mavlink_local_position_ned_t local_pos;
                         mavlink_msg_local_position_ned_decode(&msg, &local_pos);
-                        cur_pos_d = local_pos.z;
                         if (cur_wp >= 0 && cur_wp < (int)waypoints.size()) {
-                            float dx = local_pos.x - waypoints[cur_wp].x;
-                            float dy = local_pos.y - waypoints[cur_wp].y;
+                            float dx = waypoints[cur_wp].x - local_pos.x;
+                            float dy = waypoints[cur_wp].y - local_pos.y;
                             if (dx * dx + dy * dy < 1) {
                                 printf("waypoint %d arrived\n", cur_wp);
                                 ++cur_wp;
+                            } else {
+                                float tgt_vel_n = 0;
+                                float tgt_vel_e = 0;
+                                if (local_pos.vx * local_pos.vx + local_pos.vy * local_pos.vy < 0.04f) {
+                                    float inv = 1.0f / sqrtf(dx * dx + dy * dy);
+                                    tgt_vel_n = dx * inv;
+                                    tgt_vel_e = dy * inv;
+                                    printf("drone hover: %.2f, %.2f\n", tgt_vel_n, tgt_vel_e);
+                                } else {
+                                    float tgt_angle = angle_between(local_pos.vx, local_pos.vy, dx, dy);
+                                    if (fabsf(tgt_angle) <= (10.0 * M_PI / 180.0)) {
+                                        float inv = 1.0f / sqrtf(dx * dx + dy * dy);
+                                        tgt_vel_n = dx * inv;
+                                        tgt_vel_e = dy * inv;
+                                        printf("small angle: %.1f deg, %.2f, %.2f\n", tgt_angle * 180 / M_PI, tgt_vel_n, tgt_vel_e);
+                                    } else {
+                                        float step;
+                                        if (tgt_angle > 0) step = 10.0 * M_PI / 180.0; else step = -10.0 * M_PI / 180.0;
+                                        float cos_angle = cosf(step);
+                                        float sin_angle = sinf(step);
+                                        tgt_vel_n = local_pos.vx * cos_angle - local_pos.vy * sin_angle;
+                                        tgt_vel_e = local_pos.vx * sin_angle + local_pos.vy * cos_angle;
+                                        float inv = 1.0f / sqrtf(tgt_vel_n * tgt_vel_n + tgt_vel_e * tgt_vel_e);
+                                        tgt_vel_n *= inv;
+                                        tgt_vel_e *= inv;
+                                        printf("angle: %.1f deg, %.2f, %.2f\n", tgt_angle * 180 / M_PI, tgt_vel_n, tgt_vel_e);
+                                    }
+                                }
+                                struct timespec tp;
+                                clock_gettime(CLOCK_MONOTONIC, &tp);
+                                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_NED, 0xDC7, 0, 0, 0, tgt_vel_n, tgt_vel_e, 0, 0, 0, 0, 0, 0);
+                                len = mavlink_msg_to_send_buffer(buf, &msg);
+                                write(uart_fd_, buf, len);
                             }
                         }
                     }
@@ -212,10 +247,10 @@ class MavRosNode : public rclcpp::Node {
         int64_t pico_pi_t_offset = 0;
         int ts_cnt = 6;
         bool mode_need_vio = false;
-        std::array<MyWaypoint, 6> waypoints{{{6, 0, -2.5}, {0, 3, -2.5}, {0, 0, -2.5}, {6, 0, -2.5}, {0, 3, -2.5}, {0, 0, -2.5}}};
+        std::array<MyPoint, 2> waypoints{{{5, 0, -2}, {0, 2, -2}}};
         int cur_wp = -1;
         bool local_pos_rcved = false;
-        float cur_pos_d = 0;
+        MyPoint cur_pos;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
