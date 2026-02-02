@@ -61,7 +61,7 @@ class MavRosNode : public rclcpp::Node {
         }
         void odom_callback(const nav_msgs::msg::Odometry::UniquePtr odom_msg) {
             mavlink_message_t msg;
-            float nan_cov[21] = {NAN};
+            float mav_cov[21] = {NAN};
             float q[4];
             unsigned int len;
             auto& att = odom_msg->pose.pose.orientation;
@@ -80,18 +80,25 @@ class MavRosNode : public rclcpp::Node {
                         write(uart_fd_, buf, len);
                         RCLCPP_WARN(this->get_logger(), "VIO pose unreliable, land");
                     } else {
+                        mav_cov[0] = cov[0];
+                        mav_cov[6] = cov[7];
+                        mav_cov[11] = cov[14];
+                        mav_cov[15] = cov[21];
+                        mav_cov[18] = cov[28];
+                        mav_cov[20] = cov[35];
                         int64_t odom_fc_us = (odom_msg->header.stamp.sec * 1000000000LL + odom_msg->header.stamp.nanosec - pico_pi_t_offset - time_offset_ns) / 1000;
-                        mavlink_msg_att_pos_mocap_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, q, pos.x, -pos.y, -pos.z, nan_cov);
+                        mavlink_msg_att_pos_mocap_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, q, pos.x, -pos.y, -pos.z, mav_cov);
                         len = mavlink_msg_to_send_buffer(buf, &msg);
                         write(uart_fd_, buf, len);
-                        mavlink_msg_vision_speed_estimate_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, v.x, -v.y, -v.z, nan_cov, 0);
+                        mav_cov[0] = NAN;
+                        mavlink_msg_vision_speed_estimate_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, v.x, -v.y, -v.z, mav_cov, 0);
                         len = mavlink_msg_to_send_buffer(buf, &msg);
                         write(uart_fd_, buf, len);
                     }
                 } else {
                     int64_t odom_us = odom_msg->header.stamp.sec * 1000000 + odom_msg->header.stamp.nanosec / 1000;
                     mavlink_msg_odometry_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_us, MAV_FRAME_LOCAL_NED, MAV_FRAME_LOCAL_NED, pos.x, -pos.y, -pos.z, q,
-                        v.x, -v.y, -v.z, INFINITY, INFINITY, INFINITY, nan_cov, nan_cov, 0, MAV_ESTIMATOR_TYPE_NAIVE, 0);
+                        v.x, -v.y, -v.z, INFINITY, INFINITY, INFINITY, mav_cov, mav_cov, 0, MAV_ESTIMATOR_TYPE_NAIVE, 0);
                     len = mavlink_msg_to_send_buffer(buf, &msg);
                     write(uart_fd_, buf, len);
                 }
