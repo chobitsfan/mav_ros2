@@ -144,6 +144,12 @@ class MavRosNode : public rclcpp::Node {
                             mavlink_msg_set_gps_global_origin_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 247749434, 1210443077, 100000, (uint64_t)tp.tv_sec*1000000+tp.tv_nsec/1000);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
+
+                            struct timeval tv;
+                            gettimeofday(&tv, NULL);
+                            mavlink_msg_system_time_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, (uint64_t)tv.tv_sec*1000000+tv.tv_usec, tp.tv_sec*1000+tp.tv_nsec/1000000);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd_, buf, len);
                         }
                         if (hb.autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) {
                             is_apm = true;
@@ -192,10 +198,6 @@ class MavRosNode : public rclcpp::Node {
                             int64_t ns = ts.tv_sec * 1000000000 + ts.tv_nsec;
                             mavlink_msg_timesync_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, ns, sync.tc1, mav_sysid, 1);
                         }
-                        /*gettimeofday(&tv, NULL);
-                        mavlink_msg_system_time_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tv.tv_sec*1000000+tv.tv_usec, 0);
-                        len = mavlink_msg_to_send_buffer(buf, &msg);
-                        write(uart_fd_, buf, len);*/
                     } else if (msg.msgid == MAVLINK_MSG_ID_LOCAL_POSITION_NED) {
                         local_pos_rcved = true;
                         mavlink_local_position_ned_t local_pos;
