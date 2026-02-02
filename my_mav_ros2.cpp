@@ -209,7 +209,7 @@ class MavRosNode : public rclcpp::Node {
                                     float inv = tgt_speed / sqrtf(dx * dx + dy * dy);
                                     tgt_vel_n = dx * inv;
                                     tgt_vel_e = dy * inv;
-                                    printf("drone hover: %.2f, %.2f\n", tgt_vel_n, tgt_vel_e);
+                                    printf("drone hover, %.2f, %.2f\n", tgt_vel_n, tgt_vel_e);
                                 } else {
                                     float cur_angle = atan2f(local_pos.vy, local_pos.vx);
                                     float tgt_angle = atan2f(dy, dx);
@@ -219,7 +219,7 @@ class MavRosNode : public rclcpp::Node {
                                         float inv = tgt_speed / sqrtf(dx * dx + dy * dy);
                                         tgt_vel_n = dx * inv;
                                         tgt_vel_e = dy * inv;
-                                        printf("small angle: %.1f deg, %.2f, %.2f\n", angle_error * 180 / M_PI, tgt_vel_n, tgt_vel_e);
+                                        printf("vel angle (deg): cur %.1f, tgt %.1f, error %.1f (close enough), %.2f, %.2f\n", cur_angle * 180 / M_PI, tgt_angle * 180 / M_PI, angle_error * 180 / M_PI, tgt_vel_n, tgt_vel_e);
                                     } else {
                                         float omega = tgt_speed / turn_radius;
                                         float delta_theta = omega * dt;
@@ -235,7 +235,7 @@ class MavRosNode : public rclcpp::Node {
                                         tgt_acc_n = acc_mag * cosf(acc_angle);
                                         tgt_acc_e = acc_mag * sinf(acc_angle);
                                         type_mask = 0xC07;
-                                        printf("angle: %.1f deg, %.2f, %.2f\n", new_angle * 180 / M_PI, tgt_vel_n, tgt_vel_e);
+                                        printf("vel angle (deg): cur %.1f, tgt %.1f, error %.1f, new %.1f, %.2f, %.2f\n", cur_angle * 180 / M_PI, tgt_angle * 180 / M_PI, angle_error * 180 / M_PI, new_angle * 180 / M_PI, tgt_vel_n, tgt_vel_e);
                                         /*float step;
                                         if (tgt_angle > 0) step = 10.0 * M_PI / 180.0; else step = -10.0 * M_PI / 180.0;
                                         float cos_angle = cosf(step);
@@ -268,7 +268,7 @@ class MavRosNode : public rclcpp::Node {
         int64_t pico_pi_t_offset = 0;
         int ts_cnt = 6;
         bool mode_need_vio = false;
-        std::array<MyPoint, 2> waypoints{{{5, 0, -2}, {0, 2, -2}}};
+        std::array<MyPoint, 4> waypoints{{{5, 0, -2}, {0, 2, -2}, {5, 0, -2}, {0, 2, -2}}};
         int cur_wp = -1;
         bool local_pos_rcved = false;
         const float tgt_speed = 1.0f;
