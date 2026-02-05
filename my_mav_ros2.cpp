@@ -224,7 +224,7 @@ class MavRosNode : public rclcpp::Node {
                                     float tgt_angle = atan2f(dy, dx);
                                     float angle_error = tgt_angle - cur_angle;
                                     if (angle_error > M_PI) angle_error -= 2*M_PI; else if (angle_error < -M_PI) angle_error += 2*M_PI;
-                                    if (fabsf(angle_error) <= (10.0 * M_PI / 180.0)) {
+                                    if (fabsf(angle_error) <= small_angle) {
                                         float inv = tgt_speed / sqrtf(dx * dx + dy * dy);
                                         tgt_vel_n = dx * inv;
                                         tgt_vel_e = dy * inv;
@@ -283,6 +283,7 @@ class MavRosNode : public rclcpp::Node {
         const float tgt_speed = 1.0f;
         const float turn_radius = 0.8f;
         const float dt = 0.1f;
+        const float small_angle = 15.0 * M_PI / 180.0;
         MyPoint cur_pos;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
