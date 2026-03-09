@@ -32,15 +32,6 @@ struct MyPoint {
     float z;
 };
 
-float angle_between(float cur_vn, float cur_ve, float tgt_vn, float tgt_ve) {
-    float cur_angle = atan2f(cur_ve, cur_vn);
-    float tgt_angle = atan2f(tgt_ve, tgt_vn);
-    float diff = tgt_angle - cur_angle;
-    if (diff > M_PI) diff -= 2*M_PI;
-    if (diff < -M_PI) diff += 2*M_PI;
-    return diff;
-}
-
 class MavRosNode : public rclcpp::Node {
     public:
         MavRosNode(int uart_fd) : Node("mavlink_ros"), uart_fd_(uart_fd) {
@@ -166,12 +157,20 @@ class MavRosNode : public rclcpp::Node {
                             if (hb.custom_mode == 4) {
                                 if (cur_wp < 0) {
                                     cur_wp = 0;
+                                    start_pos_d = cur_pos_d;
                                     printf("mission start\n");
                                 } else if (cur_wp >= (int)waypoints.size()) {
                                     mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0);
                                     len = mavlink_msg_to_send_buffer(buf, &msg);
                                     write(uart_fd_, buf, len);
                                     printf("mission complete, land\n");
+                                } else {
+                                    struct timespec tp;
+                                    clock_gettime(CLOCK_MONOTONIC, &tp);
+                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_NED,
+0x0DF8, waypoints[cur_wp].x, waypoints[cur_wp].y, start_pos_d, 0, 0, 0, 0, 0, 0, 0, 0);
+                                    len = mavlink_msg_to_send_buffer(buf, &msg);
+                                    write(uart_fd_, buf, len);
                                 }
                             } else cur_wp = -1;
                         }
@@ -212,65 +211,13 @@ class MavRosNode : public rclcpp::Node {
                         local_pos_rcved = true;
                         mavlink_local_position_ned_t local_pos;
                         mavlink_msg_local_position_ned_decode(&msg, &local_pos);
+                        cur_pos_d = local_pos.z;
                         if (cur_wp >= 0 && cur_wp < (int)waypoints.size()) {
                             float dx = waypoints[cur_wp].x - local_pos.x;
                             float dy = waypoints[cur_wp].y - local_pos.y;
                             if (dx * dx + dy * dy < 1) {
                                 printf("waypoint %d arrived\n", cur_wp);
                                 ++cur_wp;
-                            } else {
-                                uint16_t type_mask = 0xDC7;
-                                float tgt_vel_n = 0;
-                                float tgt_vel_e = 0;
-                                float tgt_acc_n = 0;
-                                float tgt_acc_e = 0;
-                                if (local_pos.vx * local_pos.vx + local_pos.vy * local_pos.vy < 0.04f) {
-                                    float inv = tgt_speed / sqrtf(dx * dx + dy * dy);
-                                    tgt_vel_n = dx * inv;
-                                    tgt_vel_e = dy * inv;
-                                    printf("drone hover, %.2f, %.2f\n", tgt_vel_n, tgt_vel_e);
-                                } else {
-                                    float tgt_angle = atan2f(dy, dx);
-                                    float angle_error = tgt_angle - yaw;
-                                    if (angle_error > M_PI) angle_error -= 2*M_PI; else if (angle_error < -M_PI) angle_error += 2*M_PI;
-                                    if (fabsf(angle_error) <= small_angle) {
-                                        float inv = tgt_speed / sqrtf(dx * dx + dy * dy);
-                                        tgt_vel_n = dx * inv;
-                                        tgt_vel_e = dy * inv;
-                                        printf("heading %.1f, tgt %.1f, error %.1f (close enough), %.2f, %.2f\n", yaw * 180 / M_PI, tgt_angle * 180 / M_PI, angle_error * 180 / M_PI, tgt_vel_n, tgt_vel_e);
-                                    } else {
-                                        float omega = tgt_speed / turn_radius;
-                                        float delta_theta = omega * dt;
-                                        int direction;
-                                        if (angle_error > 0) direction = 1; else direction = -1;
-                                        float new_angle = yaw + (direction * delta_theta);
-                                        tgt_vel_n = tgt_speed * cosf(new_angle);
-                                        tgt_vel_e = tgt_speed * sinf(new_angle);
-                                        // Accel is perpendicular to the tangent (pointing inward)
-                                        // Rotate velocity by 90 degrees in the turn direction
-                                        float acc_angle = yaw + (direction * M_PI / 2);
-                                        float acc_mag = (local_pos.vx * local_pos.vx + local_pos.vy * local_pos.vy) / turn_radius;
-                                        tgt_acc_n = acc_mag * cosf(acc_angle);
-                                        tgt_acc_e = acc_mag * sinf(acc_angle);
-                                        type_mask = 0xC07;
-                                        printf("heading %.1f, tgt %.1f, error %.1f, new %.1f, %.2f, %.2f\n", yaw * 180 / M_PI, tgt_angle * 180 / M_PI, angle_error * 180 / M_PI, new_angle * 180 / M_PI, tgt_vel_n, tgt_vel_e);
-                                        /*float step;
-                                        if (tgt_angle > 0) step = 10.0 * M_PI / 180.0; else step = -10.0 * M_PI / 180.0;
-                                        float cos_angle = cosf(step);
-                                        float sin_angle = sinf(step);
-                                        tgt_vel_n = local_pos.vx * cos_angle - local_pos.vy * sin_angle;
-                                        tgt_vel_e = local_pos.vx * sin_angle + local_pos.vy * cos_angle;
-                                        float inv = 1.0f / sqrtf(tgt_vel_n * tgt_vel_n + tgt_vel_e * tgt_vel_e);
-                                        tgt_vel_n *= inv;
-                                        tgt_vel_e *= inv;
-                                        printf("angle: %.1f deg, %.2f, %.2f\n", tgt_angle * 180 / M_PI, tgt_vel_n, tgt_vel_e);*/
-                                    }
-                                }
-                                struct timespec tp;
-                                clock_gettime(CLOCK_MONOTONIC, &tp);
-                                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_NED, type_mask, 0, 0, 0, tgt_vel_n, tgt_vel_e, 0, tgt_acc_n, tgt_acc_e, 0, 0, 0);
-                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                write(uart_fd_, buf, len);
                             }
                         }
                     }
@@ -286,8 +233,9 @@ class MavRosNode : public rclcpp::Node {
         int64_t pico_pi_t_offset = 0;
         int ts_cnt = 6;
         bool mode_need_vio = false;
-        //std::array<MyPoint, 2> waypoints{{{15, 0, -2}, {15, 10, -2}}};
-        std::array<MyPoint, 4> waypoints{{{5, 0, -2}, {0, 2, -2}, {5, 0, -2}, {0, 2, -2}}};
+        std::array<MyPoint, 8> waypoints{{{6, 0, 0}, {6, 6, 0}, {0, 6, 0}, {0, 0, 0}, {6, 0, 0}, {6, 6, 0}, {0, 6, 0}, {0, 0, 0}}};
+        float start_pos_d = -2;
+        float cur_pos_d = -2;
         int cur_wp = -1;
         bool local_pos_rcved = false;
         bool att_rcved = false;
@@ -296,7 +244,6 @@ class MavRosNode : public rclcpp::Node {
         const float turn_radius = 0.8f;
         const float dt = 0.1f;
         const float small_angle = 15.0 * M_PI / 180.0;
-        MyPoint cur_pos;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
