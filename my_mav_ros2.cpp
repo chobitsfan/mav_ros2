@@ -66,10 +66,10 @@ class MavRosNode : public rclcpp::Node {
                 q[3] = -att.z;
                 if (is_apm && time_offset_ns != 0) {
                     if (cov[0]+cov[7]+cov[14] > 4 && mode_need_vio) {
-                        mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0);
+                        /*mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0);
                         len = mavlink_msg_to_send_buffer(buf, &msg);
                         write(uart_fd_, buf, len);
-                        RCLCPP_WARN(this->get_logger(), "VIO pose unreliable, land");
+                        RCLCPP_WARN(this->get_logger(), "VIO pose unreliable, land");*/
                     } else {
                         mav_cov[0] = cov[0];
                         mav_cov[6] = cov[7];
@@ -168,7 +168,7 @@ class MavRosNode : public rclcpp::Node {
                                     struct timespec tp;
                                     clock_gettime(CLOCK_MONOTONIC, &tp);
                                     mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_NED,
-0x0DF8, waypoints[cur_wp].x, waypoints[cur_wp].y, start_pos_d, 0, 0, 0, 0, 0, 0, 0, 0);
+0x0DF8, waypoints[cur_wp].x, waypoints[cur_wp].y, start_pos_d + waypoints[cur_wp].z, 0, 0, 0, 0, 0, 0, 0, 0);
                                     len = mavlink_msg_to_send_buffer(buf, &msg);
                                     write(uart_fd_, buf, len);
                                 }
@@ -218,6 +218,7 @@ class MavRosNode : public rclcpp::Node {
                             if (dx * dx + dy * dy < 1) {
                                 printf("waypoint %d arrived\n", cur_wp);
                                 ++cur_wp;
+                                start_pos_d = cur_pos_d;
                             }
                         }
                     }
@@ -233,9 +234,9 @@ class MavRosNode : public rclcpp::Node {
         int64_t pico_pi_t_offset = 0;
         int ts_cnt = 6;
         bool mode_need_vio = false;
-        std::array<MyPoint, 8> waypoints{{{6, 0, 0}, {6, 6, 0}, {0, 6, 0}, {0, 0, 0}, {6, 0, 0}, {6, 6, 0}, {0, 6, 0}, {0, 0, 0}}};
-        float start_pos_d = -2;
-        float cur_pos_d = -2;
+        std::array<MyPoint, 8> waypoints{{{6, 0, -0.1}, {6, 2, 0}, {0, 2, -0.1}, {0, 0, 0}, {6, 0, -0.1}, {6, 2, 0}, {0, 2, -0.1}, {0, 0, 0}}};
+        float start_pos_d = 0;
+        float cur_pos_d = 0;
         int cur_wp = -1;
         bool local_pos_rcved = false;
         bool att_rcved = false;
