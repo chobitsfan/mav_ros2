@@ -59,6 +59,7 @@ class MavRosNode : public rclcpp::Node {
             auto& pos = odom_msg->pose.pose.position;
             auto& v = odom_msg->twist.twist.linear;
             auto& cov = odom_msg->pose.covariance;
+            auto& twist_cov = odom_msg->twist.covariance;
             if (mav_sysid != 0) {
                 q[0] = att.w;
                 q[1] = att.x;
@@ -81,7 +82,9 @@ class MavRosNode : public rclcpp::Node {
                         mavlink_msg_att_pos_mocap_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, q, pos.x, -pos.y, -pos.z, mav_cov);
                         len = mavlink_msg_to_send_buffer(buf, &msg);
                         write(uart_fd_, buf, len);
-                        mav_cov[0] = NAN;
+                        mav_cov[0] = twist_cov[0];
+                        mav_cov[4] = twist_cov[7];
+                        mav_cov[8] = twist_cov[14];
                         mavlink_msg_vision_speed_estimate_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, v.x, -v.y, -v.z, mav_cov, 0);
                         len = mavlink_msg_to_send_buffer(buf, &msg);
                         write(uart_fd_, buf, len);
