@@ -137,6 +137,12 @@ class MavRosNode : public rclcpp::Node {
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
                         }
+                        if (sys_time_not_rcved) {
+                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_SYSTEM_TIME, 200'000, 0, 0
+, 0, 0, 0);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd_, buf, len);
+                        }
                         if (hb.autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) {
                             is_apm = true;
                             ts_cnt++;
@@ -149,45 +155,34 @@ class MavRosNode : public rclcpp::Node {
                                 write(uart_fd_, buf, len);
                             }
                             if (hb.custom_mode == 4) {
-                                if (cur_wp < 0) {
-                                    cur_wp = 0;
-                                    start_pos_d = cur_pos_d;
-                                    printf("mission start\n");
-                                } else if (cur_wp >= (int)waypoints.size()) {
-                                    mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0);
-                                    len = mavlink_msg_to_send_buffer(buf, &msg);
-                                    write(uart_fd_, buf, len);
-                                    printf("mission complete, land\n");
-                                } else if (wp_not_sent) {
+                                if (wp_not_sent) {
                                     wp_not_sent = false;
                                     struct timespec tp;
                                     clock_gettime(CLOCK_MONOTONIC, &tp);
-                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_NED,
-0x0DF8, waypoints[cur_wp].x, waypoints[cur_wp].y, start_pos_d + waypoints[cur_wp].z, 0, 0, 0, 0, 0, 0, 0, 0);
+                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, 10, 0, -0.2f, 0, 0, 0, 0, 0, 0, 0, 0);
                                     len = mavlink_msg_to_send_buffer(buf, &msg);
                                     write(uart_fd_, buf, len);
                                 }
                             } else {
-                                cur_wp = -1;
                                 wp_not_sent = true;
                             }
                         }
-                        if (!local_pos_rcved) {
-                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_LOCAL_POSITION_NED, 100'000, 0, 0, 0, 0, 0);
-                            len = mavlink_msg_to_send_buffer(buf, &msg);
-                            write(uart_fd_, buf, len);
-                        }
-                        /*if (!att_rcved) {
-                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_ATTITUDE, 100'000, 0, 0, 0, 0, 0);
-                            len = mavlink_msg_to_send_buffer(buf, &msg);
-                            write(uart_fd_, buf, len);
-                        }*/
                     } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
                         mavlink_statustext_t txt;
                         char txt_buf[64] = {0};
                         mavlink_msg_statustext_decode(&msg, &txt);
                         memcpy(txt_buf, txt.text, 50);
                         printf("FC: %s\n", txt_buf);
+                    } else if (msg.msgid == MAVLINK_MSG_ID_EVENT) {
+                        mavlink_event_t evt;
+                        mavlink_msg_event_decode(&msg, &evt);
+                        if (evt.event_time_boot_ms > latest_evt_ms) {
+                            latest_evt_ms = evt.event_time_boot_ms;
+                            printf("event: %d %d\n", evt.id, evt.event_time_boot_ms);
+                            if (evt.id == 62) { // EKF_YAW_RESET
+                                latest_yaw_reset_ms = evt.event_time_boot_ms;
+                            }
+                        }
                     } else if (msg.msgid == MAVLINK_MSG_ID_TIMESYNC) {
                         struct timespec ts;
                         mavlink_timesync_t sync;
@@ -200,25 +195,18 @@ class MavRosNode : public rclcpp::Node {
                             int64_t ns = ts.tv_sec * 1000000000 + ts.tv_nsec;
                             mavlink_msg_timesync_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, ns, sync.tc1, mav_sysid, 1);
                         }
-                    } else if (msg.msgid == MAVLINK_MSG_ID_ATTITUDE) {
-                        att_rcved = true;
-                        mavlink_attitude_t att;
-                        mavlink_msg_attitude_decode(&msg, &att);
-                        yaw = att.yaw;
-                    } else if (msg.msgid == MAVLINK_MSG_ID_LOCAL_POSITION_NED) {
-                        local_pos_rcved = true;
-                        mavlink_local_position_ned_t local_pos;
-                        mavlink_msg_local_position_ned_decode(&msg, &local_pos);
-                        cur_pos_d = local_pos.z;
-                        if (cur_wp >= 0 && cur_wp < (int)waypoints.size()) {
-                            float dx = waypoints[cur_wp].x - local_pos.x;
-                            float dy = waypoints[cur_wp].y - local_pos.y;
-                            if (dx * dx + dy * dy < 1) {
-                                printf("waypoint %d arrived\n", cur_wp);
-                                ++cur_wp;
-                                start_pos_d = cur_pos_d;
-                                wp_not_sent = true;
-                            }
+                    } else if (msg.msgid == MAVLINK_MSG_ID_SYSTEM_TIME) {
+                        sys_time_not_rcved = false;
+                        mavlink_system_time_t sys_time;
+                        mavlink_msg_system_time_decode(&msg, &sys_time);
+                        if (latest_yaw_reset_ms > 0 && sys_time.time_boot_ms - latest_yaw_reset_ms > 200) { // position reset finished after yaw reset, so we need to wait for a short time
+                            struct timespec tp;
+                            clock_gettime(CLOCK_MONOTONIC, &tp);
+                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, 10, 0, -0.2f, 0, 0, 0, 0, 0, 0, 0, 0);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd_, buf, len);
+                            printf("ekf yaw reset %d %d\n", latest_yaw_reset_ms, sys_time.time_boot_ms);
+                            latest_yaw_reset_ms = 0;
                         }
                     }
                 }
@@ -232,16 +220,10 @@ class MavRosNode : public rclcpp::Node {
         int64_t time_offset_ns = 0;
         int64_t pico_pi_t_offset = 0;
         int ts_cnt = 6;
-        //std::array<MyPoint, 9> waypoints{{{3.6, -1.1, -0.1}, {3.6, 1.1, -0.1}, {-2.4, -1.1, -0.1}, {-2.4, 1.1, -0.1}, {3.6, -1.1, -0.1}, {3.6, 1.1, -0.1}, {-2.4, -1.1, -0.1}, {-2.4, 1.1, -0.1}, {0, 0, 0}}};
-        //std::array<MyPoint, 4> waypoints{{{10, 0, -0.3}, {10, 10, -0.3}, {0, 10, -0.1}, {0, 0, -0.1}}};
-        std::array<MyPoint, 2> waypoints{{{15, 0, -0.3}, {0, 0, -0.1}}};
-        float start_pos_d = 0;
-        float cur_pos_d = 0;
-        int cur_wp = -1;
-        bool local_pos_rcved = false;
-        bool att_rcved = false;
-        float yaw = 0;
         bool wp_not_sent = true;
+        uint32_t latest_evt_ms = 0;
+        uint32_t latest_yaw_reset_ms = 0;
+        bool sys_time_not_rcved = true;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
