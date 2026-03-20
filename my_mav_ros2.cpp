@@ -182,11 +182,11 @@ class MavRosNode : public rclcpp::Node {
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
                         }
-                        if (!att_rcved) {
+                        /*if (!att_rcved) {
                             mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_ATTITUDE, 100'000, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
-                        }
+                        }*/
                     } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
                         mavlink_statustext_t txt;
                         char txt_buf[64] = {0};
@@ -237,7 +237,9 @@ class MavRosNode : public rclcpp::Node {
         int64_t pico_pi_t_offset = 0;
         int ts_cnt = 6;
         bool mode_need_vio = false;
-        std::array<MyPoint, 8> waypoints{{{6, 0, -0.1}, {6, 2, 0}, {0, 2, -0.1}, {0, 0, 0}, {6, 0, -0.1}, {6, 2, 0}, {0, 2, -0.1}, {0, 0, 0}}};
+        std::array<MyPoint, 9> waypoints{{{3.6, -1.1, -0.1}, {3.6, 1.1, -0.1}, {-2.4, -1.1, -0.1}, {-2.4, 1.1, -0.1}, {3.6, -1.1, -0.1}, {3.6, 1.1, -0.1}, {-2.4, -1.1, -0.1}, {-2.4, 1.1, -0.1}, {0, 0, 0}}};
+        //std::array<MyPoint, 4> waypoints{{{10, 0, -0.3}, {10, 10, -0.3}, {0, 10, -0.1}, {0, 0, -0.1}}};
+        //std::array<MyPoint, 2> waypoints{{{15, 0, -0.3}, {0, 0, -0.1}}};
         float start_pos_d = 0;
         float cur_pos_d = 0;
         int cur_wp = -1;
