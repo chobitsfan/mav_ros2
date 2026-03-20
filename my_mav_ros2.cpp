@@ -66,29 +66,22 @@ class MavRosNode : public rclcpp::Node {
                 q[2] = -att.y;
                 q[3] = -att.z;
                 if (is_apm && time_offset_ns != 0) {
-                    if (cov[0]+cov[7]+cov[14] > 4 && mode_need_vio) {
-                        /*mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0);
-                        len = mavlink_msg_to_send_buffer(buf, &msg);
-                        write(uart_fd_, buf, len);
-                        RCLCPP_WARN(this->get_logger(), "VIO pose unreliable, land");*/
-                    } else {
-                        mav_cov[0] = cov[0];
-                        mav_cov[6] = cov[7];
-                        mav_cov[11] = cov[14];
-                        mav_cov[15] = cov[21];
-                        mav_cov[18] = cov[28];
-                        mav_cov[20] = cov[35];
-                        int64_t odom_fc_us = (odom_msg->header.stamp.sec * 1000000000LL + odom_msg->header.stamp.nanosec - pico_pi_t_offset - time_offset_ns) / 1000;
-                        mavlink_msg_att_pos_mocap_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, q, pos.x, -pos.y, -pos.z, mav_cov);
-                        len = mavlink_msg_to_send_buffer(buf, &msg);
-                        write(uart_fd_, buf, len);
-                        mav_cov[0] = twist_cov[0];
-                        mav_cov[4] = twist_cov[7];
-                        mav_cov[8] = twist_cov[14];
-                        mavlink_msg_vision_speed_estimate_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, v.x, -v.y, -v.z, mav_cov, 0);
-                        len = mavlink_msg_to_send_buffer(buf, &msg);
-                        write(uart_fd_, buf, len);
-                    }
+                    mav_cov[0] = cov[0];
+                    mav_cov[6] = cov[7];
+                    mav_cov[11] = cov[14];
+                    mav_cov[15] = cov[21];
+                    mav_cov[18] = cov[28];
+                    mav_cov[20] = cov[35];
+                    int64_t odom_fc_us = (odom_msg->header.stamp.sec * 1000000000LL + odom_msg->header.stamp.nanosec - pico_pi_t_offset - time_offset_ns) / 1000;
+                    mavlink_msg_att_pos_mocap_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, q, pos.x, -pos.y, -pos.z, mav_cov);
+                    len = mavlink_msg_to_send_buffer(buf, &msg);
+                    write(uart_fd_, buf, len);
+                    mav_cov[0] = twist_cov[0];
+                    mav_cov[4] = twist_cov[7];
+                    mav_cov[8] = twist_cov[14];
+                    mavlink_msg_vision_speed_estimate_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, v.x, -v.y, -v.z, mav_cov, 0);
+                    len = mavlink_msg_to_send_buffer(buf, &msg);
+                    write(uart_fd_, buf, len);
                 } else {
                     int64_t odom_us = odom_msg->header.stamp.sec * 1000000 + odom_msg->header.stamp.nanosec / 1000;
                     mavlink_msg_odometry_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_us, MAV_FRAME_LOCAL_NED, MAV_FRAME_LOCAL_NED, pos.x, -pos.y, -pos.z, q,
@@ -156,7 +149,6 @@ class MavRosNode : public rclcpp::Node {
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd_, buf, len);
                             }
-                            if (hb.custom_mode == 3 || hb.custom_mode == 4 || hb.custom_mode == 5) mode_need_vio = true; else mode_need_vio = false;
                             if (hb.custom_mode == 4) {
                                 if (cur_wp < 0) {
                                     cur_wp = 0;
@@ -236,7 +228,6 @@ class MavRosNode : public rclcpp::Node {
         int64_t time_offset_ns = 0;
         int64_t pico_pi_t_offset = 0;
         int ts_cnt = 6;
-        bool mode_need_vio = false;
         std::array<MyPoint, 9> waypoints{{{3.6, -1.1, -0.1}, {3.6, 1.1, -0.1}, {-2.4, -1.1, -0.1}, {-2.4, 1.1, -0.1}, {3.6, -1.1, -0.1}, {3.6, 1.1, -0.1}, {-2.4, -1.1, -0.1}, {-2.4, 1.1, -0.1}, {0, 0, 0}}};
         //std::array<MyPoint, 4> waypoints{{{10, 0, -0.3}, {10, 10, -0.3}, {0, 10, -0.1}, {0, 0, -0.1}}};
         //std::array<MyPoint, 2> waypoints{{{15, 0, -0.3}, {0, 0, -0.1}}};
