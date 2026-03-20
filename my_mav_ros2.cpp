@@ -128,10 +128,9 @@ class MavRosNode : public rclcpp::Node {
 
                             struct timespec tp;
                             clock_gettime(CLOCK_MONOTONIC, &tp);
-                            mavlink_msg_set_gps_global_origin_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 247749434, 1210443077, 100000, (uint64_t)tp.tv_sec*1000000+tp.tv_nsec/1000);
+                            /*mavlink_msg_set_gps_global_origin_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 247749434, 1210443077, 100000, (uint64_t)tp.tv_sec*1000000+tp.tv_nsec/1000);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
-                            write(uart_fd_, buf, len);
-
+                            write(uart_fd_, buf, len);*/
                             struct timeval tv;
                             gettimeofday(&tv, NULL);
                             mavlink_msg_system_time_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, (uint64_t)tv.tv_sec*1000000+tv.tv_usec, tp.tv_sec*1000+tp.tv_nsec/1000000);
@@ -159,7 +158,8 @@ class MavRosNode : public rclcpp::Node {
                                     len = mavlink_msg_to_send_buffer(buf, &msg);
                                     write(uart_fd_, buf, len);
                                     printf("mission complete, land\n");
-                                } else {
+                                } else if (wp_not_sent) {
+                                    wp_not_sent = false;
                                     struct timespec tp;
                                     clock_gettime(CLOCK_MONOTONIC, &tp);
                                     mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_NED,
@@ -167,7 +167,10 @@ class MavRosNode : public rclcpp::Node {
                                     len = mavlink_msg_to_send_buffer(buf, &msg);
                                     write(uart_fd_, buf, len);
                                 }
-                            } else cur_wp = -1;
+                            } else {
+                                cur_wp = -1;
+                                wp_not_sent = true;
+                            }
                         }
                         if (!local_pos_rcved) {
                             mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_LOCAL_POSITION_NED, 100'000, 0, 0, 0, 0, 0);
@@ -184,7 +187,7 @@ class MavRosNode : public rclcpp::Node {
                         char txt_buf[64] = {0};
                         mavlink_msg_statustext_decode(&msg, &txt);
                         memcpy(txt_buf, txt.text, 50);
-                        printf("fc: %s\n", txt_buf);
+                        printf("FC: %s\n", txt_buf);
                     } else if (msg.msgid == MAVLINK_MSG_ID_TIMESYNC) {
                         struct timespec ts;
                         mavlink_timesync_t sync;
@@ -214,6 +217,7 @@ class MavRosNode : public rclcpp::Node {
                                 printf("waypoint %d arrived\n", cur_wp);
                                 ++cur_wp;
                                 start_pos_d = cur_pos_d;
+                                wp_not_sent = true;
                             }
                         }
                     }
@@ -228,19 +232,16 @@ class MavRosNode : public rclcpp::Node {
         int64_t time_offset_ns = 0;
         int64_t pico_pi_t_offset = 0;
         int ts_cnt = 6;
-        std::array<MyPoint, 9> waypoints{{{3.6, -1.1, -0.1}, {3.6, 1.1, -0.1}, {-2.4, -1.1, -0.1}, {-2.4, 1.1, -0.1}, {3.6, -1.1, -0.1}, {3.6, 1.1, -0.1}, {-2.4, -1.1, -0.1}, {-2.4, 1.1, -0.1}, {0, 0, 0}}};
+        //std::array<MyPoint, 9> waypoints{{{3.6, -1.1, -0.1}, {3.6, 1.1, -0.1}, {-2.4, -1.1, -0.1}, {-2.4, 1.1, -0.1}, {3.6, -1.1, -0.1}, {3.6, 1.1, -0.1}, {-2.4, -1.1, -0.1}, {-2.4, 1.1, -0.1}, {0, 0, 0}}};
         //std::array<MyPoint, 4> waypoints{{{10, 0, -0.3}, {10, 10, -0.3}, {0, 10, -0.1}, {0, 0, -0.1}}};
-        //std::array<MyPoint, 2> waypoints{{{15, 0, -0.3}, {0, 0, -0.1}}};
+        std::array<MyPoint, 2> waypoints{{{15, 0, -0.3}, {0, 0, -0.1}}};
         float start_pos_d = 0;
         float cur_pos_d = 0;
         int cur_wp = -1;
         bool local_pos_rcved = false;
         bool att_rcved = false;
         float yaw = 0;
-        const float tgt_speed = 1.0f;
-        const float turn_radius = 0.8f;
-        const float dt = 0.1f;
-        const float small_angle = 15.0 * M_PI / 180.0;
+        bool wp_not_sent = true;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
