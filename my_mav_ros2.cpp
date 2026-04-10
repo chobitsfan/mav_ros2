@@ -143,6 +143,12 @@ class MavRosNode : public rclcpp::Node {
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
                         }
+                        if (gps_raw_not_rcved) {
+                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_GPS_RAW_INT, 1'000'000, 0, 0
+, 0, 0, 0);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd_, buf, len);
+                        }
                         if (hb.autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) {
                             is_apm = true;
                             ts_cnt++;
@@ -176,11 +182,12 @@ class MavRosNode : public rclcpp::Node {
                     } else if (msg.msgid == MAVLINK_MSG_ID_EVENT) {
                         mavlink_event_t evt;
                         mavlink_msg_event_decode(&msg, &evt);
-                        if (evt.event_time_boot_ms > latest_evt_ms) {
+                        if (evt.event_time_boot_ms != latest_evt_ms) {
                             latest_evt_ms = evt.event_time_boot_ms;
-                            printf("event: %d %d\n", evt.id, evt.event_time_boot_ms);
+                            //printf("event: %d %d\n", evt.id, evt.event_time_boot_ms);
                             if (evt.id == 62) { // EKF_YAW_RESET
                                 latest_yaw_reset_ms = evt.event_time_boot_ms;
+                                printf("ekf yaw reset at %d ms\n", evt.event_time_boot_ms);
                             }
                         }
                     } else if (msg.msgid == MAVLINK_MSG_ID_TIMESYNC) {
@@ -200,14 +207,13 @@ class MavRosNode : public rclcpp::Node {
                         mavlink_system_time_t sys_time;
                         mavlink_msg_system_time_decode(&msg, &sys_time);
                         if (latest_yaw_reset_ms > 0 && sys_time.time_boot_ms - latest_yaw_reset_ms > 200) { // position reset finished after yaw reset, so we need to wait for a short time
-                            struct timespec tp;
-                            clock_gettime(CLOCK_MONOTONIC, &tp);
-                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, 10, 0, -0.2f, 0, 0, 0, 0, 0, 0, 0, 0);
-                            len = mavlink_msg_to_send_buffer(buf, &msg);
-                            write(uart_fd_, buf, len);
-                            printf("ekf yaw reset %d %d\n", latest_yaw_reset_ms, sys_time.time_boot_ms);
                             latest_yaw_reset_ms = 0;
                         }
+                    } else if (msg.msgid == MAVLINK_MSG_ID_GPS_RAW_INT) {
+                        gps_raw_not_rcved = false;
+                        mavlink_gps_raw_int_t gps_raw;
+                        mavlink_msg_gps_raw_int_decode(&msg, &gps_raw);
+                        //printf("hdop:%d, spd acc:%d\n", gps_raw.eph, gps_raw.vel_acc);
                     }
                 }
             }
@@ -224,6 +230,7 @@ class MavRosNode : public rclcpp::Node {
         uint32_t latest_evt_ms = 0;
         uint32_t latest_yaw_reset_ms = 0;
         bool sys_time_not_rcved = true;
+        bool gps_raw_not_rcved = true;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
