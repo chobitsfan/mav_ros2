@@ -10,6 +10,7 @@
 #include <errno.h> // Error integer and strerror() function
 #include <math.h>
 #include <time.h>
+#include <sys/mman.h>
 #include "mavlink/ardupilotmega/mavlink.h"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/float32.hpp"
@@ -47,6 +48,14 @@ class MavRosNode : public rclcpp::Node {
                 rclcpp::QoS(1).best_effort().durability_volatile(),
                 std::bind(&MavRosNode::tag_dir_callback, this, std::placeholders::_1));
             uart_timer_ = this->create_wall_timer(10ms, [this](){ timer_callback(); });
+            shm_fd = shm_open("pos_v_ned", O_CREAT | O_RDWR, 0666);
+            ftruncate(shm_fd, 10*sizeof(float));
+            shm_ptr = (float*)mmap(0, 10*sizeof(float), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+        }
+        ~MavRosNode() {
+            munmap(shm_ptr, 10*sizeof(float));
+            close(shm_fd);
+            shm_unlink("pos_v_ned");
         }
 
     private:
@@ -166,13 +175,23 @@ class MavRosNode : public rclcpp::Node {
                             write(uart_fd_, buf, len);
                         }*/
                         if (gps_raw_not_rcved) {
-                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_GPS_RAW_INT, 1'000'000, 0, 0
+                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_GPS_RAW_INT, 200'000, 0, 0
 , 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
                         }
                         if (ekf_status_not_rcved) {
                             mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_EKF_STATUS_REPORT, 200'000, 0, 0, 0, 0, 0);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd_, buf, len);
+                        }
+                        if (att_q_not_rcved) {
+                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_ATTITUDE_QUATERNION, 100'000, 0, 0, 0, 0, 0);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd_, buf, len);
+                        }
+                        if (local_pos_not_rcved) {
+                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_LOCAL_POSITION_NED, 100'000, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
                         }
@@ -302,6 +321,25 @@ class MavRosNode : public rclcpp::Node {
                         //if (cur_mode == COPTER_MODE_LOITER && not_landed) printf("mag var:%f\n", ekf_status.compass_variance);
                         if (prv_mag_bad && ekf_status.compass_variance > 0.9) mag_bad = true; else mag_bad = false;
                         if (ekf_status.compass_variance > 0.9) prv_mag_bad = true; else prv_mag_bad = false;
+                    } else if (msg.msgid == MAVLINK_MSG_ID_ATTITUDE_QUATERNION) {
+                        att_q_not_rcved = false;
+                        mavlink_attitude_quaternion_t att;
+                        mavlink_msg_attitude_quaternion_decode(&msg, &att);
+                        shm_ptr[0] = att.q1;
+                        shm_ptr[1] = att.q2;
+                        shm_ptr[2] = att.q3;
+                        shm_ptr[3] = att.q4;
+                    } else if (msg.msgid == MAVLINK_MSG_ID_LOCAL_POSITION_NED) {
+                        local_pos_not_rcved = false;
+                        mavlink_local_position_ned_t pos;
+                        mavlink_msg_local_position_ned_decode(&msg, &pos);
+                        shm_ptr[4] = pos.x;
+                        shm_ptr[5] = pos.y;
+                        shm_ptr[6] = pos.z;
+                        shm_ptr[7] = pos.vx;
+                        shm_ptr[8] = pos.vy;
+                        shm_ptr[9] = pos.vz;
+                        //printf("%f %f %f %f %f %f\n",pos.x, pos.y, pos.z, pos.vx, pos.vy, pos.vz); 
                     }
                 }
             }
@@ -327,6 +365,11 @@ class MavRosNode : public rclcpp::Node {
         bool not_landed = false;
         int tag_found_ts = 0;
         uint32_t cur_mode = 0;
+        int brake_cnt = 0;
+        bool local_pos_not_rcved = true;
+        bool att_q_not_rcved = true;
+        int shm_fd;
+        float* shm_ptr;
         constexpr static float low_light_thres = 11;
         constexpr static float tag_spd = 0.5;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
