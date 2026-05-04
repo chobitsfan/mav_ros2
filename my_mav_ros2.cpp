@@ -12,15 +12,10 @@
 #include <time.h>
 #include "mavlink/ardupilotmega/mavlink.h"
 #include "rclcpp/rclcpp.hpp"
-#include "std_msgs/msg/string.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/int64.hpp"
-#include "visualization_msgs/msg/marker.hpp"
-#include "geometry_msgs/msg/point_stamped.hpp"
-#include "sensor_msgs/msg/range.hpp"
-#include "geometry_msgs/msg/twist_stamped.hpp"
-#include "sensor_msgs/msg/point_cloud.hpp"
 #include "nav_msgs/msg/odometry.hpp"
+#include "geometry_msgs/msg/vector3.hpp"
 
 using namespace std::chrono_literals;
 
@@ -47,10 +42,24 @@ class MavRosNode : public rclcpp::Node {
                 "light_value",
                 rclcpp::QoS(1).best_effort().durability_volatile(),
                 std::bind(&MavRosNode::lv_callback, this, std::placeholders::_1));
+            tag_dir_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
+                "tag_dir_frd",
+                rclcpp::QoS(1).best_effort().durability_volatile(),
+                std::bind(&MavRosNode::tag_dir_callback, this, std::placeholders::_1));
             uart_timer_ = this->create_wall_timer(10ms, [this](){ timer_callback(); });
         }
 
     private:
+        void tag_dir_callback(const geometry_msgs::msg::Vector3::UniquePtr tag_dir) {
+            unsigned int len;
+            mavlink_message_t msg;
+            struct timespec tp;
+            clock_gettime(CLOCK_MONOTONIC, &tp);
+            tag_found_ts = tp.tv_sec;
+            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, tag_dir->x*tag_spd, tag_dir->y*tag_spd, tag_dir->z*tag_spd, 0, 0, 0, 0, 0);
+            len = mavlink_msg_to_send_buffer(buf, &msg);
+            write(uart_fd_, buf, len);
+        }
         void lv_callback(const std_msgs::msg::Float32::UniquePtr lv_msg) {
             if (lv_msg->data < low_light_thres) {
                 low_light = true;
@@ -180,16 +189,19 @@ class MavRosNode : public rclcpp::Node {
                             }
                             cur_mode = hb.custom_mode;
                             if (hb.custom_mode == 4) { // guided
+#if 1
                                 if (act_idx == 0) {
                                     act_idx = 1;
                                     struct timespec tp;
                                     clock_gettime(CLOCK_MONOTONIC, &tp);
-                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, 5, 0, -0.1f, 0, 0, 0, 0, 0, 0, 0, 0);
+                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, 10, 0, -0.1f, 0, 0, 0, 0, 0, 0, 0, 0);
                                     len = mavlink_msg_to_send_buffer(buf, &msg);
                                     write(uart_fd_, buf, len);
                                     RCLCPP_INFO(this->get_logger(), "mission start");
                                 } else if (act_idx == 1) {
-                                    if (low_light || mag_bad) {
+                                    struct timespec tp;
+                                    clock_gettime(CLOCK_MONOTONIC, &tp);
+                                    if (tp.tv_sec - tag_found_ts < 1) {
                                         act_idx = 2;
                                         mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 17, 0, 0, 0, 0, 0); // brake
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -213,6 +225,7 @@ class MavRosNode : public rclcpp::Node {
                                         RCLCPP_INFO(this->get_logger(), "mission finished");
                                     }
                                 }
+#endif
                             } else if (hb.custom_mode == 17) { // brake
                                 if (act_idx == 2) {
                                     act_idx = 3;
@@ -310,11 +323,14 @@ class MavRosNode : public rclcpp::Node {
         bool mag_bad = false;
         bool prv_mag_bad = false;
         bool not_landed = false;
+        int tag_found_ts = 0;
         uint32_t cur_mode = 0;
         constexpr static float low_light_thres = 11;
+        constexpr static float tag_spd = 0.5;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
         rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr lv_sub_;
+        rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr tag_dir_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
 };
 
