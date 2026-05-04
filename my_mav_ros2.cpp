@@ -203,6 +203,7 @@ class MavRosNode : public rclcpp::Node {
                                     clock_gettime(CLOCK_MONOTONIC, &tp);
                                     if (tp.tv_sec - tag_found_ts < 1) {
                                         act_idx = 2;
+                                        brake_cnt = 2; // give brake some time to stop vehicle
                                         mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 17, 0, 0, 0, 0, 0); // brake
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
                                         write(uart_fd_, buf, len);
@@ -228,14 +229,20 @@ class MavRosNode : public rclcpp::Node {
 #endif
                             } else if (hb.custom_mode == 17) { // brake
                                 if (act_idx == 2) {
-                                    act_idx = 3;
-                                    latest_yaw_reset_ms = 0;
-                                    mavlink_msg_command_int_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_FRAME_GLOBAL, 42007, 0, 0, 2, 0, 0, 0, 0, 0, 0);
-                                    len = mavlink_msg_to_send_buffer(buf, &msg);
-                                    write(uart_fd_, buf, len);
-                                    RCLCPP_INFO(this->get_logger(), "ekf switch to src2");
+                                    --brake_cnt;
+                                    if (brake_cnt < 0) {
+                                        act_idx = 3;
+                                        latest_yaw_reset_ms = 0;
+                                        mavlink_msg_command_int_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_FRAME_GLOBAL, 42007, 0, 0, 2, 0, 0, 0, 0, 0, 0);
+                                        len = mavlink_msg_to_send_buffer(buf, &msg);
+                                        write(uart_fd_, buf, len);
+                                        RCLCPP_INFO(this->get_logger(), "ekf switch to src2");
+                                    }
                                 } else if (act_idx == 3) {
-                                    if (latest_yaw_reset_ms > 0) {
+                                    struct timespec tp;
+                                    clock_gettime(CLOCK_MONOTONIC, &tp);
+                                    int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
+                                    if (now_ms - latest_yaw_reset_ms > 200) { // wait pos reset done
                                         act_idx = 4;
                                         mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 4, 0, 0, 0, 0, 0); // guided
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -260,7 +267,9 @@ class MavRosNode : public rclcpp::Node {
                             latest_evt_ms = evt.event_time_boot_ms;
                             //printf("event: %d %d\n", evt.id, evt.event_time_boot_ms);
                             if (evt.id == 62) { // EKF_YAW_RESET
-                                latest_yaw_reset_ms = evt.event_time_boot_ms;
+                                struct timespec tp;
+                                clock_gettime(CLOCK_MONOTONIC, &tp);
+                                latest_yaw_reset_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
                                 RCLCPP_INFO(this->get_logger(), "ekf yaw reset at %d ms", evt.event_time_boot_ms);
                             } else if (evt.id == 18) { // LAND_COMPLETE
                                 not_landed = false;
@@ -280,13 +289,6 @@ class MavRosNode : public rclcpp::Node {
                             int64_t ns = ts.tv_sec * 1000000000 + ts.tv_nsec;
                             mavlink_msg_timesync_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, ns, sync.tc1, mav_sysid, 1);
                         }
-                    /*} else if (msg.msgid == MAVLINK_MSG_ID_SYSTEM_TIME) {
-                        sys_time_not_rcved = false;
-                        mavlink_system_time_t sys_time;
-                        mavlink_msg_system_time_decode(&msg, &sys_time);
-                        if (latest_yaw_reset_ms > 0 && sys_time.time_boot_ms - latest_yaw_reset_ms > 200) { // position reset finished after yaw reset, so we need to wait for a short time
-                            latest_yaw_reset_ms = 0;
-                        }*/
                     } else if (msg.msgid == MAVLINK_MSG_ID_GPS_RAW_INT) {
                         gps_raw_not_rcved = false;
                         mavlink_gps_raw_int_t gps_raw;
@@ -313,7 +315,7 @@ class MavRosNode : public rclcpp::Node {
         int64_t pico_pi_t_offset = 0;
         int ts_cnt = 6;
         uint32_t latest_evt_ms = 0;
-        uint32_t latest_yaw_reset_ms = 0;
+        int latest_yaw_reset_ms = 0;
         //bool sys_time_not_rcved = true;
         bool gps_raw_not_rcved = true;
         bool low_light = false;
