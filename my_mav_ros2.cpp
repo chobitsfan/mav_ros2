@@ -71,9 +71,17 @@ class MavRosNode : public rclcpp::Node {
             struct timespec tp;
             clock_gettime(CLOCK_MONOTONIC, &tp);
             tag_found_ms = tp.tv_sec*1000+tp.tv_nsec/1000000;
-            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tag_found_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, tag_dir->x*tag_spd, tag_dir->y*tag_spd, tag_dir->z*tag_spd, 0, 0, 0, 0, 0);
-            len = mavlink_msg_to_send_buffer(buf, &msg);
-            write(uart_fd_, buf, len);
+            if (act_idx == 5 && tag_dir->x == 0 && tag_dir->y == 0 && tag_dir->z == 0) {
+                act_idx = 1000;
+                mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0); // land
+                len = mavlink_msg_to_send_buffer(buf, &msg);
+                write(uart_fd_, buf, len);
+                RCLCPP_INFO(this->get_logger(), "mission finished");
+            } else {
+                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tag_found_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, tag_dir->x*tag_spd, tag_dir->y*tag_spd, tag_dir->z*tag_spd, 0, 0, 0, 0, 0);
+                len = mavlink_msg_to_send_buffer(buf, &msg);
+                write(uart_fd_, buf, len);
+            }
         }
         void lv_callback(const std_msgs::msg::Float32::UniquePtr lv_msg) {
             if (lv_msg->data < low_light_thres) {
@@ -105,7 +113,6 @@ class MavRosNode : public rclcpp::Node {
                 q[3] = -att.z;
                 if (is_apm) {
                     if (time_offset_ns != 0) {
-                        vio_pos_var = cov[0] + cov[7] + cov[14];
                         mav_cov[0] = cov[0];
                         mav_cov[6] = cov[7];
                         mav_cov[11] = cov[14];
@@ -123,6 +130,14 @@ class MavRosNode : public rclcpp::Node {
                         mavlink_msg_vision_speed_estimate_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, v.x, -v.y, -v.z, mav_cov, 0);
                         len = mavlink_msg_to_send_buffer(buf, &msg);
                         write(uart_fd_, buf, len);
+
+                        if (fc_use_vio && vio_vel_var > 3*3) {
+                            act_idx = 1000;
+                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0); // land
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd_, buf, len);
+                            RCLCPP_INFO(this->get_logger(), "vio drift, land");
+                        }
                     }
                 } else {
                     int64_t odom_us = odom_msg->header.stamp.sec * 1000000 + odom_msg->header.stamp.nanosec / 1000;
@@ -277,13 +292,7 @@ class MavRosNode : public rclcpp::Node {
                                                     RCLCPP_INFO(this->get_logger(), "fork kimera-vio");
                                                 }
                                             }
-                                        } else if (vio_pos_var > 25 || vio_vel_var > 9) {
-                                            act_idx = 1000;
-                                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0); // land
-                                            len = mavlink_msg_to_send_buffer(buf, &msg);
-                                            write(uart_fd_, buf, len);
-                                            RCLCPP_INFO(this->get_logger(), "vio drift, land");
-                                        } else {
+                                        } else if ((now_ms - latest_vio_ms < 1000) && vio_vel_var < 1*1) {
                                             act_idx = 3;
                                             latest_yaw_reset_ms = 0;
                                             mavlink_msg_command_int_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_FRAME_GLOBAL, 42007, 0, 0, 2, 0, 0, 0, 0, 0, 0);
@@ -338,6 +347,10 @@ class MavRosNode : public rclcpp::Node {
                                 clock_gettime(CLOCK_MONOTONIC, &tp);
                                 latest_yaw_reset_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
                                 RCLCPP_INFO(this->get_logger(), "ekf yaw reset at %d ms", evt.event_time_boot_ms);
+                            } else if (evt.id == 86) {
+                                fc_use_vio = true;
+                            } else if (evt.id == 85 || evt.id == 87) {
+                                fc_use_vio = false;
                             } else if (evt.id == 18) { // LAND_COMPLETE
                                 not_landed = false;
                             } else if (evt.id == 28) { // NOT_LANDED
@@ -418,10 +431,10 @@ class MavRosNode : public rclcpp::Node {
         bool att_q_not_rcved = true;
         int shm_fd;
         float* shm_ptr;
-        float vio_pos_var = 0;
         float vio_vel_var = 0;
         int latest_vio_ms = 0;
         pid_t vio_pid = 0;
+        bool fc_use_vio = false;
         constexpr static float low_light_thres = 11;
         constexpr static float tag_spd = 0.5;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
