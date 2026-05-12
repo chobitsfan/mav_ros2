@@ -89,6 +89,9 @@ class MavRosNode : public rclcpp::Node {
             auto& v = odom_msg->twist.twist.linear;
             auto& cov = odom_msg->pose.covariance;
             auto& twist_cov = odom_msg->twist.covariance;
+            struct timespec tp;
+            clock_gettime(CLOCK_MONOTONIC, &tp);
+            latest_vio_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
             if (mav_sysid != 0) {
                 q[0] = att.w;
                 q[1] = att.x;
@@ -96,6 +99,7 @@ class MavRosNode : public rclcpp::Node {
                 q[3] = -att.z;
                 if (is_apm) {
                     if (time_offset_ns != 0) {
+                        vio_pos_var = cov[0] + cov[7] + cov[14];
                         mav_cov[0] = cov[0];
                         mav_cov[6] = cov[7];
                         mav_cov[11] = cov[14];
@@ -106,6 +110,7 @@ class MavRosNode : public rclcpp::Node {
                         mavlink_msg_att_pos_mocap_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, odom_fc_us, q, pos.x, -pos.y, -pos.z, mav_cov);
                         len = mavlink_msg_to_send_buffer(buf, &msg);
                         write(uart_fd_, buf, len);
+                        vio_vel_var = twist_cov[0] + twist_cov[7] + twist_cov[14];
                         mav_cov[0] = twist_cov[0];
                         mav_cov[4] = twist_cov[7];
                         mav_cov[8] = twist_cov[14];
@@ -238,7 +243,7 @@ class MavRosNode : public rclcpp::Node {
                                     RCLCPP_INFO(this->get_logger(), "forward a little");
                                 } else if (act_idx == 5) {
                                     if (gps_not_avail) {
-                                        act_idx = 6;
+                                        act_idx = 1000;
                                         mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0); // land
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
                                         write(uart_fd_, buf, len);
@@ -250,12 +255,23 @@ class MavRosNode : public rclcpp::Node {
                                 if (act_idx == 2) {
                                     --brake_cnt;
                                     if (brake_cnt < 0) {
-                                        act_idx = 3;
-                                        latest_yaw_reset_ms = 0;
-                                        mavlink_msg_command_int_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_FRAME_GLOBAL, 42007, 0, 0, 2, 0, 0, 0, 0, 0, 0);
-                                        len = mavlink_msg_to_send_buffer(buf, &msg);
-                                        write(uart_fd_, buf, len);
-                                        RCLCPP_INFO(this->get_logger(), "ekf switch to src2");
+                                        struct timespec tp;
+                                        clock_gettime(CLOCK_MONOTONIC, &tp);
+                                        int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
+                                        if (now_ms - latest_vio_ms > 3000 || vio_pos_var > 100 || vio_vel_var > 25) {
+                                            act_idx = 1000;
+                                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0); // land
+                                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                                            write(uart_fd_, buf, len);
+                                            RCLCPP_INFO(this->get_logger(), "vio not avail, abort");
+                                        } else {
+                                            act_idx = 3;
+                                            latest_yaw_reset_ms = 0;
+                                            mavlink_msg_command_int_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_FRAME_GLOBAL, 42007, 0, 0, 2, 0, 0, 0, 0, 0, 0);
+                                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                                            write(uart_fd_, buf, len);
+                                            RCLCPP_INFO(this->get_logger(), "ekf switch to src2");
+                                        }
                                     }
                                 } else if (act_idx == 3) {
                                     struct timespec tp;
@@ -370,6 +386,9 @@ class MavRosNode : public rclcpp::Node {
         bool att_q_not_rcved = true;
         int shm_fd;
         float* shm_ptr;
+        float vio_pos_var = 0;
+        float vio_vel_var = 0;
+        int latest_vio_ms = 0;
         constexpr static float low_light_thres = 11;
         constexpr static float tag_spd = 0.5;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
