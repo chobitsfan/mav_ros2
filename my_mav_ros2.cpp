@@ -70,8 +70,8 @@ class MavRosNode : public rclcpp::Node {
             mavlink_message_t msg;
             struct timespec tp;
             clock_gettime(CLOCK_MONOTONIC, &tp);
-            tag_found_ts = tp.tv_sec;
-            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, tag_dir->x*tag_spd, tag_dir->y*tag_spd, tag_dir->z*tag_spd, 0, 0, 0, 0, 0);
+            tag_found_ms = tp.tv_sec*1000+tp.tv_nsec/1000000;
+            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tag_found_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, tag_dir->x*tag_spd, tag_dir->y*tag_spd, tag_dir->z*tag_spd, 0, 0, 0, 0, 0);
             len = mavlink_msg_to_send_buffer(buf, &msg);
             write(uart_fd_, buf, len);
         }
@@ -231,9 +231,10 @@ class MavRosNode : public rclcpp::Node {
                                 } else if (act_idx == 1) {
                                     struct timespec tp;
                                     clock_gettime(CLOCK_MONOTONIC, &tp);
-                                    if ((tp.tv_sec - tag_found_ts < 1) || gps_bad) {
+                                    int cur_ms = tp.tv_sec*1000+tp.tv_nsec/1000000;
+                                    if ((cur_ms - tag_found_ms < 1000) || gps_bad) {
                                         act_idx = 2;
-                                        brake_cnt = 2; // give brake some time to stop vehicle
+                                        brake_cnt = 3; // give brake some time to stop vehicle
                                         mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 17, 0, 0, 0, 0, 0); // brake
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
                                         write(uart_fd_, buf, len);
@@ -262,12 +263,26 @@ class MavRosNode : public rclcpp::Node {
                                         struct timespec tp;
                                         clock_gettime(CLOCK_MONOTONIC, &tp);
                                         int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
-                                        if (now_ms - latest_vio_ms > 3000 || vio_pos_var > 100 || vio_vel_var > 25) {
+                                        if (now_ms - latest_vio_ms > 3000) {
+                                            if (vio_pid == 0) {
+                                                pid_t pid = fork();
+                                                if (pid < 0) {
+                                                    printf("fork failed\n");
+                                                } else if (pid == 0) {
+                                                    if (chdir("/home/pi/src/kimera-vio/scripts") != 0) printf("chdir failed\n");
+                                                    execl("./monoVIO_imx296_bmi270_restart.bash", "monoVIO_imx296_bmi270_restart.bash", NULL);
+                                                    printf("execl failed\n");
+                                                } else {
+                                                    vio_pid = pid;
+                                                    RCLCPP_INFO(this->get_logger(), "fork kimera-vio");
+                                                }
+                                            }
+                                        } else if (vio_pos_var > 25 || vio_vel_var > 9) {
                                             act_idx = 1000;
                                             mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 9, 0, 0, 0, 0, 0); // land
                                             len = mavlink_msg_to_send_buffer(buf, &msg);
                                             write(uart_fd_, buf, len);
-                                            RCLCPP_INFO(this->get_logger(), "vio not avail, abort");
+                                            RCLCPP_INFO(this->get_logger(), "vio drift, land");
                                         } else {
                                             act_idx = 3;
                                             latest_yaw_reset_ms = 0;
@@ -281,14 +296,14 @@ class MavRosNode : public rclcpp::Node {
                                     struct timespec tp;
                                     clock_gettime(CLOCK_MONOTONIC, &tp);
                                     int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
-                                    if (now_ms - latest_yaw_reset_ms > 200) { // wait pos reset done
+                                    if (now_ms - latest_yaw_reset_ms > 300) { // wait pos reset done
                                         act_idx = 4;
                                         mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 4, 0, 0, 0, 0, 0); // guided
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
                                         write(uart_fd_, buf, len);
                                         RCLCPP_INFO(this->get_logger(), "ekf yaw reset, carry on");
                                     }
-                                } else {
+                                } /*else {
                                     if (vio_pid == 0) {
                                         pid_t pid = fork();
                                         if (pid < 0) {
@@ -301,7 +316,7 @@ class MavRosNode : public rclcpp::Node {
                                             vio_pid = pid;
                                         }
                                     }
-                                }
+                                }*/
                             } else {
                                 act_idx = 0;
                             }
@@ -396,7 +411,7 @@ class MavRosNode : public rclcpp::Node {
         bool mag_bad = false;
         bool prv_mag_bad = false;
         bool not_landed = false;
-        int tag_found_ts = 0;
+        int tag_found_ms = 0;
         uint32_t cur_mode = 0;
         int brake_cnt = 0;
         bool local_pos_not_rcved = true;
