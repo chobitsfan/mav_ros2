@@ -389,6 +389,8 @@ class MavRosNode : public rclcpp::Node {
                             clock_gettime(CLOCK_MONOTONIC, &ts);
                             int64_t ns = ts.tv_sec * 1000000000 + ts.tv_nsec;
                             mavlink_msg_timesync_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, ns, sync.tc1, mav_sysid, 1);
+                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                            write(uart_fd_, buf, len);
                         }
                     } else if (msg.msgid == MAVLINK_MSG_ID_GPS_RAW_INT) {
                         gps_raw_not_rcved = false;
