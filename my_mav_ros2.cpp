@@ -16,6 +16,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/int64.hpp"
+#include "std_msgs/msg/bool.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
 
@@ -40,14 +41,14 @@ class MavRosNode : public rclcpp::Node {
                 "pico_pi_t_offset",
                 rclcpp::QoS(1).best_effort().durability_volatile(),
                 std::bind(&MavRosNode::t_offset_callback, this, std::placeholders::_1));
-            lv_sub_ = this->create_subscription<std_msgs::msg::Float32>(
-                "light_value",
-                rclcpp::QoS(1).best_effort().durability_volatile(),
-                std::bind(&MavRosNode::lv_callback, this, std::placeholders::_1));
             tag_dir_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
                 "tag_dir_frd",
                 rclcpp::QoS(1).best_effort().durability_volatile(),
                 std::bind(&MavRosNode::tag_dir_callback, this, std::placeholders::_1));
+            no_sky_sub_ = this->create_subscription<std_msgs::msg::Bool>(
+                "no_sky",
+                rclcpp::QoS(1).best_effort().durability_volatile(),
+                std::bind(&MavRosNode::no_sky_callback, this, std::placeholders::_1));
             uart_timer_ = this->create_wall_timer(10ms, [this](){ timer_callback(); });
             shm_fd = shm_open("pos_v_ned", O_CREAT | O_RDWR, 0666);
             ftruncate(shm_fd, 10*sizeof(float));
@@ -85,15 +86,11 @@ class MavRosNode : public rclcpp::Node {
                 write(uart_fd_, buf, len);
             }
         }
-        void lv_callback(const std_msgs::msg::Float32::UniquePtr lv_msg) {
-            if (lv_msg->data < low_light_thres) {
-                low_light = true;
-            } else {
-                low_light = false;
-            }
-        }
         void t_offset_callback(const std_msgs::msg::Int64::UniquePtr t_offset_msg) {
             pico_pi_t_offset = t_offset_msg->data;
+        }
+        void no_sky_callback(const std_msgs::msg::Bool::UniquePtr no_sky_msg) {
+            no_sky = no_sky_msg->data;
         }
         void odom_callback(const nav_msgs::msg::Odometry::UniquePtr odom_msg) {
             mavlink_message_t msg;
@@ -246,10 +243,7 @@ class MavRosNode : public rclcpp::Node {
                                     write(uart_fd_, buf, len);
                                     RCLCPP_INFO(this->get_logger(), "mission start");
                                 } else if (act_idx == 1) {
-                                    struct timespec tp;
-                                    clock_gettime(CLOCK_MONOTONIC, &tp);
-                                    int cur_ms = tp.tv_sec*1000+tp.tv_nsec/1000000;
-                                    if ((cur_ms - tag_found_ms < 1000) || gps_bad) {
+                                    if (no_sky || gps_bad) {
                                         act_idx = 2;
                                         brake_cnt = 3; // give brake some time to stop vehicle
                                         mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 17, 0, 0, 0, 0, 0); // brake
@@ -261,7 +255,7 @@ class MavRosNode : public rclcpp::Node {
                                     act_idx = 5;
                                     struct timespec tp;
                                     clock_gettime(CLOCK_MONOTONIC, &tp);
-                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
                                     len = mavlink_msg_to_send_buffer(buf, &msg);
                                     write(uart_fd_, buf, len);
                                     RCLCPP_INFO(this->get_logger(), "forward");
@@ -292,7 +286,7 @@ class MavRosNode : public rclcpp::Node {
                                         clock_gettime(CLOCK_MONOTONIC, &tp);
                                         int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
                                         if (now_ms - latest_vio_ms > 3000) {
-                                            if (vio_pid == 0) {
+                                            /*if (vio_pid == 0) {
                                                 pid_t pid = fork();
                                                 if (pid < 0) {
                                                     printf("fork failed\n");
@@ -304,14 +298,19 @@ class MavRosNode : public rclcpp::Node {
                                                     vio_pid = pid;
                                                     RCLCPP_INFO(this->get_logger(), "fork kimera-vio");
                                                 }
+                                            }*/
+                                            RCLCPP_ERROR(this->get_logger(), "no vio output");
+                                        } else {
+                                            if (vio_vel_var > 1*1) {
+                                                RCLCPP_ERROR(this->get_logger(), "vio high vel var: %f", vio_vel_var);
+                                            } else {
+                                                act_idx = 3;
+                                                latest_yaw_reset_ms = 0;
+                                                mavlink_msg_command_int_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_FRAME_GLOBAL, 42007, 0, 0, 2, 0, 0, 0, 0, 0, 0);
+                                                len = mavlink_msg_to_send_buffer(buf, &msg);
+                                                write(uart_fd_, buf, len);
+                                                RCLCPP_INFO(this->get_logger(), "ekf switch to src2(vio)");
                                             }
-                                        } else if ((now_ms - latest_vio_ms < 1000) && vio_vel_var < 1*1) {
-                                            act_idx = 3;
-                                            latest_yaw_reset_ms = 0;
-                                            mavlink_msg_command_int_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_FRAME_GLOBAL, 42007, 0, 0, 2, 0, 0, 0, 0, 0, 0);
-                                            len = mavlink_msg_to_send_buffer(buf, &msg);
-                                            write(uart_fd_, buf, len);
-                                            RCLCPP_INFO(this->get_logger(), "ekf switch to src2(vio)");
                                         }
                                     }
                                 } else if (act_idx == 3) {
@@ -384,7 +383,7 @@ class MavRosNode : public rclcpp::Node {
                         mavlink_msg_timesync_decode(&msg, &sync);
                         if (sync.tc1 > 0) {
                             time_offset_ns = sync.ts1 - sync.tc1;
-                            printf("time offset: %ld ns\n", time_offset_ns);
+                            printf("time offset: %ld ms\n", time_offset_ns / 1000000);
                         } else if (sync.tc1 == 0) {
                             clock_gettime(CLOCK_MONOTONIC, &ts);
                             int64_t ns = ts.tv_sec * 1000000000 + ts.tv_nsec;
@@ -440,7 +439,6 @@ class MavRosNode : public rclcpp::Node {
         int latest_yaw_reset_ms = 0;
         //bool sys_time_not_rcved = true;
         bool gps_raw_not_rcved = true;
-        bool low_light = false;
         int act_idx = 0;
         bool gps_bad = true;
         bool ekf_status_not_rcved = true;
@@ -458,12 +456,12 @@ class MavRosNode : public rclcpp::Node {
         int latest_vio_ms = 0;
         pid_t vio_pid = 0;
         bool fc_use_vio = false;
-        constexpr static float low_light_thres = 11;
+        bool no_sky = false;
         constexpr static float tag_spd = 0.5;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
-        rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr lv_sub_;
         rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr tag_dir_sub_;
+        rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr no_sky_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
 };
 
