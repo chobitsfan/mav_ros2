@@ -11,12 +11,14 @@ find_package(visualization_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(eigen3_cmake_module REQUIRED)
+find_package(Eigen3 REQUIRED)
 
 include_directories(${ament_INCLUDE_DIRS})
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 
 add_executable(mav_ros2 my_mav_ros2.cpp)
-ament_target_dependencies(mav_ros2 rclcpp std_msgs visualization_msgs geometry_msgs sensor_msgs nav_msgs)
+ament_target_dependencies(mav_ros2 rclcpp std_msgs visualization_msgs geometry_msgs sensor_msgs nav_msgs Eigen3)
 
 ament_package()
