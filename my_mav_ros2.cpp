@@ -73,18 +73,20 @@ class MavRosNode : public rclcpp::Node {
             struct timespec tp;
             clock_gettime(CLOCK_MONOTONIC, &tp);
             tag_found_ms = tp.tv_sec*1000+tp.tv_nsec/1000000;
-            if (act_idx == 5 && tag_dir->x == 0 && tag_dir->y == 0 && tag_dir->z == 0) {
-                act_idx = 6;
-                struct timespec tp;
-                clock_gettime(CLOCK_MONOTONIC, &tp);
-                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, -10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-                len = mavlink_msg_to_send_buffer(buf, &msg);
-                write(uart_fd_, buf, len);
-                RCLCPP_INFO(this->get_logger(), "backward");
-            } else if (act_idx == 0 || act_idx == 5) {
-                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tag_found_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, tag_dir->x*tag_spd, tag_dir->y*tag_spd, tag_dir->z*tag_spd, 0, 0, 0, 0, 0);
-                len = mavlink_msg_to_send_buffer(buf, &msg);
-                write(uart_fd_, buf, len);
+            if (act_idx == 5) {
+                if (tag_dir->x == 0 && tag_dir->y == 0 && tag_dir->z == 0) {
+                    act_idx = 6;
+                    struct timespec tp;
+                    clock_gettime(CLOCK_MONOTONIC, &tp);
+                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, -10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                    len = mavlink_msg_to_send_buffer(buf, &msg);
+                    write(uart_fd_, buf, len);
+                    RCLCPP_INFO(this->get_logger(), "backward");
+                } else {
+                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tag_found_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, tag_dir->x*tag_spd, tag_dir->y*tag_spd, tag_dir->z*tag_spd, 0, 0, 0, 0, 0);
+                    len = mavlink_msg_to_send_buffer(buf, &msg);
+                    write(uart_fd_, buf, len);
+                }
             }
         }
         void t_offset_callback(const std_msgs::msg::Int64::UniquePtr t_offset_msg) {
