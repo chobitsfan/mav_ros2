@@ -76,12 +76,14 @@ class MavRosNode : public rclcpp::Node {
             if (act_idx == 5) {
                 if (tag_dir->x == 0 && tag_dir->y == 0 && tag_dir->z == 0) {
                     act_idx = 6;
+                    Eigen::Vector3f tgt_body(-5, 0, 0);
+                    tgt_local_pos = att_q * tgt_body + local_pos;
                     struct timespec tp;
                     clock_gettime(CLOCK_MONOTONIC, &tp);
                     mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, -10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
                     len = mavlink_msg_to_send_buffer(buf, &msg);
                     write(uart_fd_, buf, len);
-                    RCLCPP_INFO(this->get_logger(), "backward");
+                    RCLCPP_INFO(this->get_logger(), "close to sign, backward");
                 } else {
                     mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tag_found_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, tag_dir->x*tag_spd, tag_dir->y*tag_spd, tag_dir->z*tag_spd, 0, 0, 0, 0, 0);
                     len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -426,7 +428,7 @@ class MavRosNode : public rclcpp::Node {
                                 mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, -5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd_, buf, len);
-                                RCLCPP_INFO(this->get_logger(), "backward");
+                                RCLCPP_INFO(this->get_logger(), "tgt rached, backward");
                             }
                         } else if (act_idx == 6) {
                             float x_diff = tgt_local_pos.x() - pos.x;
