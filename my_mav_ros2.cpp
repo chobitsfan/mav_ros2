@@ -153,6 +153,69 @@ class MavRosNode : public rclcpp::Node {
             }
         }
 
+        std::array<float, 4> do_circle(float cur_pos_n, float cur_pos_e, float cur_vel_n, float cur_vel_e) {
+            static float circle_center_n = 0; // m
+            static float circle_center_e = -1.5f; // m
+            static float circle_radius = 1.4f; // m
+            static float desired_speed = 0.5f; // m/s
+            static float circle_dir = 1;  // +1 = counter-clockwise, -1 = clockwise
+            static const float radius_p_gain = 1.0f; // How hard we pull back onto the ring when off-radius. 1/s.
+
+            // Vector from the circle centre to the vehicle.
+            float dn = cur_pos_n - circle_center_n;
+            float de = cur_pos_e - circle_center_e;
+            float dist = sqrtf(dn * dn + de * de);
+
+            // Sitting on the centre: no radial direction is defined, so head out along
+            // the current velocity (or north if we are not moving either).
+            if (dist < 1e-4f) {
+                float spd = sqrtf(cur_vel_n * cur_vel_n + cur_vel_e * cur_vel_e);
+                if (spd > 1e-4f) {
+                    dn = cur_vel_n / spd;
+                    de = cur_vel_e / spd;
+                } else {
+                    dn = 1.0f;
+                    de = 0.0f;
+                }
+                dist = 0.0f;
+            } else {
+                dn /= dist;
+                de /= dist;
+            }
+
+            // Unit radial (outward) and unit tangential vectors. Rotating the outward
+            // radial by +90 deg in the north-east plane gives (n, e) = (de, -dn), which
+            // is counter-clockwise seen from above; circle_dir flips it.
+            float rad_n = dn;
+            float rad_e = de;
+            float dir = (circle_dir >= 0.0f) ? 1.0f : -1.0f;
+            float tan_n = dir * rad_e;
+            float tan_e = -dir * rad_n;
+
+            // Radial speed closes the radius error, capped so it never eats the whole
+            // speed budget; the rest of the budget goes to the tangential direction.
+            float radius_err = dist - circle_radius; // >0 = outside the circle
+            float vel_radial = -radius_p_gain * radius_err;
+            if (vel_radial > desired_speed) {
+                vel_radial = desired_speed;
+            } else if (vel_radial < -desired_speed) {
+                vel_radial = -desired_speed;
+            }
+
+            float vel_tan_sq = desired_speed * desired_speed - vel_radial * vel_radial;
+            float vel_tan = (vel_tan_sq > 0.0f) ? sqrtf(vel_tan_sq) : 0.0f;
+
+            float vel_n = tan_n * vel_tan + rad_n * vel_radial;
+            float vel_e = tan_e * vel_tan + rad_e * vel_radial;
+
+            // Centripetal feed-forward: v^2 / r pointing at the centre (inward).
+            float acc_mag = (circle_radius > 1e-4f) ? (vel_tan * vel_tan / circle_radius) : 0.0f;
+            float acc_n = -rad_n * acc_mag;
+            float acc_e = -rad_e * acc_mag;
+
+            return {vel_n, vel_e, acc_n, acc_e};
+        }
+
         void timer_callback() {
             static int parse_error = 0;
             static int packet_rx_drop_count = 0;
@@ -238,7 +301,7 @@ class MavRosNode : public rclcpp::Node {
                             }
                             cur_mode = hb.custom_mode;
                             if (hb.custom_mode == 4) { // guided
-#if 1
+#if 0
                                 if (act_idx == 0) {
                                     act_idx = 1;
                                     struct timespec tp;
@@ -415,6 +478,14 @@ class MavRosNode : public rclcpp::Node {
                         local_pos_not_rcved = false;
                         mavlink_local_position_ned_t pos;
                         mavlink_msg_local_position_ned_decode(&msg, &pos);
+                        auto tgt_vel_acc = do_circle(pos.x, pos.y, pos.vx, pos.vy);
+                        //printf("%f %f %f %f\n", tgt_vel_acc[0], tgt_vel_acc[1], tgt_vel_acc[2], tgt_vel_acc[3]);
+                        struct timespec tp;
+                        clock_gettime(CLOCK_MONOTONIC, &tp);
+                        mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_NED, 0xc07, 0, 0, 0, tgt_vel_acc[0], tgt_vel_acc[1], 0, tgt_vel_acc[2], tgt_vel_acc[3], 0, 0, 0);
+                        len = mavlink_msg_to_send_buffer(buf, &msg);
+                        write(uart_fd_, buf, len);
+#if 0
                         local_pos = Eigen::Vector3f(pos.x, pos.y, pos.z);
                         if (act_idx == 5) {
                             float x_diff = tgt_local_pos.x() - pos.x;
@@ -442,6 +513,7 @@ class MavRosNode : public rclcpp::Node {
                                 RCLCPP_INFO(this->get_logger(), "brake for vio to gps");
                             }
                         }
+#endif
                     }
                 }
             }
