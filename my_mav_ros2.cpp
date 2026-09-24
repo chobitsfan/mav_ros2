@@ -254,9 +254,9 @@ class MavRosNode : public rclcpp::Node {
                                         mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_DO_SET_MODE, 0, 1, 17, 0, 0, 0, 0, 0); // brake
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
                                         write(uart_fd_, buf, len);
-                                        mavlink_msg_param_set_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, "WP_YAW_BEHAVIOR", 0, 1);
+                                        /*mavlink_msg_param_set_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, "WP_YAW_BEHAVIOR", 0, 1);
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
-                                        write(uart_fd_, buf, len);
+                                        write(uart_fd_, buf, len);*/
                                         RCLCPP_INFO(this->get_logger(), "brake for gps to vio");
                                     }
                                 } else if (act_idx == 4) {
