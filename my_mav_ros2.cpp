@@ -226,13 +226,13 @@ class MavRosNode : public rclcpp::Node {
                                 } else if (act_idx == 1) {
                                     if (no_sky) {
                                         act_idx = 2;
-                                        brake_cnt = 3; // give brake some time to stop vehicle
+                                        brake_cnt = 2; // give brake some time to stop vehicle
                                         mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_DO_SET_MODE, 0, 1, 17, 0, 0, 0, 0, 0); // brake
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
                                         write(uart_fd_, buf, len);
-                                        /*mavlink_msg_param_set_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, "WP_YAW_BEHAVIOR", 0, 1);
+                                        mavlink_msg_param_set_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, "WP_YAW_BEHAVIOR", 0, 1);
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
-                                        write(uart_fd_, buf, len);*/
+                                        write(uart_fd_, buf, len);
                                         RCLCPP_INFO(this->get_logger(), "brake for gps to vio");
                                     }
                                 } else if (act_idx == 4) {
@@ -294,6 +294,9 @@ class MavRosNode : public rclcpp::Node {
                                     if (now_ms - latest_yaw_reset_ms > 300) { // wait pos reset done
                                         act_idx = 4;
                                         mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 4, 0, 0, 0, 0, 0); // guided
+                                        len = mavlink_msg_to_send_buffer(buf, &msg);
+                                        write(uart_fd_, buf, len);
+                                        mavlink_msg_param_set_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, "WP_YAW_BEHAVIOR", 2, 1);
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
                                         write(uart_fd_, buf, len);
                                         RCLCPP_INFO(this->get_logger(), "ekf reset done, carry on");
@@ -416,7 +419,7 @@ class MavRosNode : public rclcpp::Node {
                         } else if (act_idx == 7) {
                             if ((local_pos - start_local_pos).squaredNorm() > DIST_C * DIST_C) {
                                 act_idx = 8;
-                                brake_cnt = 3; // give brake some time to stop vehicle
+                                brake_cnt = 2; // give brake some time to stop vehicle
                                 mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_DO_SET_MODE, 0, 1, 17, 0, 0, 0, 0, 0); // brake
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd_, buf, len);
