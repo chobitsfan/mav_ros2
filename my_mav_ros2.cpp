@@ -20,10 +20,12 @@
 #include "std_msgs/msg/bool.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
+#include "my_slide_win.hpp"
 
 #define DIST_A 5
 #define DIST_B 9
 #define DIST_C 5
+#define BAD_GPS_SCALE 2.5f
 
 using namespace std::chrono_literals;
 
@@ -180,12 +182,12 @@ class MavRosNode : public rclcpp::Node {
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
                         }*/
-                        /*if (gps_raw_not_rcved) {
+                        if (gps_raw_not_rcved) {
                             mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_GPS_RAW_INT, 100'000, 0, 0
 , 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
-                        }*/
+                        }
                         /*if (ekf_status_not_rcved) {
                             mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_EKF_STATUS_REPORT, 200'000, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
@@ -215,6 +217,10 @@ class MavRosNode : public rclcpp::Node {
                             cur_mode = hb.custom_mode;
                             if (hb.custom_mode == 4) { // guided
 #if 1
+                                if (normal_gps_vel_acc == 0) {
+                                    normal_gps_vel_acc = gps_vel_acc_w.mean();
+                                    printf("normal gps vel acc:%d\n", normal_gps_vel_acc);
+                                }
                                 if (act_idx == 0) {
                                     act_idx = 1;
                                     struct timespec tp;
@@ -224,7 +230,8 @@ class MavRosNode : public rclcpp::Node {
                                     write(uart_fd_, buf, len);
                                     RCLCPP_INFO(this->get_logger(), "mission start");
                                 } else if (act_idx == 1) {
-                                    if (no_sky) {
+                                    if (gps_vel_acc_w.mean() > normal_gps_vel_acc * BAD_GPS_SCALE) bad_gps = true;
+                                    if (no_sky || bad_gps) {
                                         act_idx = 2;
                                         brake_cnt = 2; // give brake some time to stop vehicle
                                         mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_DO_SET_MODE, 0, 1, 17, 0, 0, 0, 0, 0); // brake
@@ -291,8 +298,8 @@ class MavRosNode : public rclcpp::Node {
                                     struct timespec tp;
                                     clock_gettime(CLOCK_MONOTONIC, &tp);
                                     int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
-                                    if (now_ms - latest_yaw_reset_ms > 300) { // wait pos reset done
-                                        act_idx = 4;
+                                    if (now_ms - latest_yaw_reset_ms > 500) { // wait pos reset done
+                                        if (bad_gps) act_idx = 5; else act_idx = 4;
                                         mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, 0, MAV_CMD_DO_SET_MODE, 0, 1, 4, 0, 0, 0, 0, 0); // guided
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
                                         write(uart_fd_, buf, len);
@@ -373,6 +380,7 @@ class MavRosNode : public rclcpp::Node {
                         mavlink_gps_raw_int_t gps_raw;
                         mavlink_msg_gps_raw_int_decode(&msg, &gps_raw);
                         //printf("hdop:%d, spd acc:%d\n", gps_raw.eph, gps_raw.vel_acc);
+                        gps_vel_acc_w.push(gps_raw.vel_acc);
                     } else if (msg.msgid == MAVLINK_MSG_ID_EKF_STATUS_REPORT) {
                         ekf_status_not_rcved = false;
                         mavlink_ekf_status_report_t ekf_status;
@@ -462,6 +470,9 @@ class MavRosNode : public rclcpp::Node {
         pid_t vio_pid = 0;
         bool fc_use_vio = false;
         bool no_sky = false;
+        bool bad_gps = false;
+        MySlidingWindow<3> gps_vel_acc_w;
+        uint32_t normal_gps_vel_acc;
         constexpr static float tag_spd = 0.5;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
