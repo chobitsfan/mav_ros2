@@ -52,6 +52,10 @@ class MavRosNode : public rclcpp::Node {
                 "no_sky",
                 rclcpp::QoS(1).best_effort().durability_volatile(),
                 std::bind(&MavRosNode::no_sky_callback, this, std::placeholders::_1));
+            tag_dir_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
+                "tag_dir_frd",
+                rclcpp::QoS(1).best_effort().durability_volatile(),
+                std::bind(&MavRosNode::tag_dir_callback, this, std::placeholders::_1));
             uart_timer_ = this->create_wall_timer(10ms, [this](){ timer_callback(); });
             shm_fd = shm_open("pos_v_ned", O_CREAT | O_RDWR, 0666);
             ftruncate(shm_fd, 10*sizeof(float));
@@ -69,6 +73,18 @@ class MavRosNode : public rclcpp::Node {
         }
 
     private:
+        void tag_dir_callback(const geometry_msgs::msg::Vector3::UniquePtr tag_dir) {
+            if (act_idx == 1) {
+                unsigned int len;
+                mavlink_message_t msg;
+                struct timespec tp;
+                clock_gettime(CLOCK_MONOTONIC, &tp);
+                leader_spotted_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
+                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, leader_spotted_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, tag_dir->x*(tag_spd+0.1f), tag_dir->y*(tag_spd+0.1f), tag_dir->z*(tag_spd+0.1f), 0, 0, 0, 0, 0);
+                len = mavlink_msg_to_send_buffer(buf, &msg);
+                write(uart_fd_, buf, len);
+            }
+        }
         void t_offset_callback(const std_msgs::msg::Int64::UniquePtr t_offset_msg) {
             pico_pi_t_offset = t_offset_msg->data;
         }
@@ -241,6 +257,16 @@ class MavRosNode : public rclcpp::Node {
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
                                         write(uart_fd_, buf, len);
                                         RCLCPP_INFO(this->get_logger(), "brake for gps to vio");
+                                    } else {
+                                        struct timespec tp;
+                                        clock_gettime(CLOCK_MONOTONIC, &tp);
+                                        int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
+                                        if (now_ms - leader_spotted_ms > 2000) {
+                                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, leader_spotted_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, tag_spd, 0, 0, 0, 0, 0, 0, 0);
+                                            len = mavlink_msg_to_send_buffer(buf, &msg);
+                                            write(uart_fd_, buf, len);
+                                            RCLCPP_INFO(this->get_logger(), "leader lost, move forward");
+                                        }
                                     }
                                 } else if (act_idx == 4) {
                                     act_idx = 5;
@@ -473,9 +499,11 @@ class MavRosNode : public rclcpp::Node {
         bool bad_gps = false;
         MySlidingWindow<3> gps_vel_acc_w;
         uint32_t normal_gps_vel_acc;
-        constexpr static float tag_spd = 0.5;
+        int leader_spotted_ms = 0;
+        constexpr static float tag_spd = 0.5f;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
+        rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr tag_dir_sub_;
         rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr no_sky_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
 };
