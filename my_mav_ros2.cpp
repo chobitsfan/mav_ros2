@@ -481,14 +481,13 @@ class MavRosNode : public rclcpp::Node {
         bool mag_bad = false;
         bool prv_mag_bad = false;
         bool not_landed = false;
-        int tag_found_ms = 0;
         uint32_t cur_mode = 0;
         int brake_cnt = 0;
         bool local_pos_not_rcved = true;
-        Eigen::Vector3f start_local_pos;
-        Eigen::Vector3f local_pos;
+        Eigen::Vector3f start_local_pos = Eigen::Vector3f::Zero();
+        Eigen::Vector3f local_pos = Eigen::Vector3f::Zero();
         bool att_q_not_rcved = true;
-        Eigen::Quaternionf att_q;
+        Eigen::Quaternionf att_q = Eigen::Quaternionf::Identity();
         int shm_fd;
         float* shm_ptr;
         float vio_vel_var = 0;
