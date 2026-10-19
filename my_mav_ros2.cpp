@@ -241,7 +241,7 @@ class MavRosNode : public rclcpp::Node {
                                     act_idx = 1;
                                     struct timespec tp;
                                     clock_gettime(CLOCK_MONOTONIC, &tp);
-                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, 15, 0, -0.5f, 0, 0, 0, 0, 0, 0, 0, 0);
+                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, 15, 0, -0.2f, 0, 0, 0, 0, 0, 0, 0, 0);
                                     len = mavlink_msg_to_send_buffer(buf, &msg);
                                     write(uart_fd_, buf, len);
                                     RCLCPP_INFO(this->get_logger(), "mission start");
@@ -250,7 +250,10 @@ class MavRosNode : public rclcpp::Node {
                                     if (no_sky || bad_gps) {
                                         act_idx = 2;
                                         brake_cnt = 2; // give vehicle some time to stop
-                                        mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, leader_spotted_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                                        struct timespec tp;
+                                        clock_gettime(CLOCK_MONOTONIC, &tp);
+                                        int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
+                                        mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, now_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
                                         len = mavlink_msg_to_send_buffer(buf, &msg);
                                         write(uart_fd_, buf, len);
                                         mavlink_msg_param_set_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, "WP_YAW_BEHAVIOR", 0, 1);
@@ -261,11 +264,11 @@ class MavRosNode : public rclcpp::Node {
                                         struct timespec tp;
                                         clock_gettime(CLOCK_MONOTONIC, &tp);
                                         int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
-                                        if (now_ms - leader_spotted_ms > 2000) {
-                                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, leader_spotted_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, 0.3f, 0, 0, 0, 0, 0, 0, 0);
+                                        if (leader_spotted_ms && now_ms - leader_spotted_ms > 2000) {
+                                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, now_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, 0.45f, 0, 0, 0, 0, 0, 0, 0);
                                             len = mavlink_msg_to_send_buffer(buf, &msg);
                                             write(uart_fd_, buf, len);
-                                            RCLCPP_INFO(this->get_logger(), "leader lost, move forward slowly");
+                                            RCLCPP_INFO(this->get_logger(), "leader lost, move forward");
                                         }
                                     }
                                 } else if (act_idx == 2) {
