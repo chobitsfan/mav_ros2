@@ -74,7 +74,7 @@ class MavRosNode : public rclcpp::Node {
 
     private:
         void tag_dir_callback(const geometry_msgs::msg::Vector3::UniquePtr tag_dir) {
-            if (act_idx == 1) {
+            if (act_idx == 1 || act_idx == 6) {
                 unsigned int len;
                 mavlink_message_t msg;
                 struct timespec tp;
