@@ -19,13 +19,13 @@
 #include "std_msgs/msg/int64.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "nav_msgs/msg/odometry.hpp"
-#include "geometry_msgs/msg/vector3.hpp"
+#include <geometry_msgs/msg/twist_stamped.hpp>
 #include "my_slide_win.hpp"
 
 #define DIST_A 5
 #define DIST_B 9
 #define DIST_C 4
-#define BAD_GPS_SCALE 2.2f
+#define BAD_GPS_SCALE 2.3f
 
 using namespace std::chrono_literals;
 
@@ -52,10 +52,10 @@ class MavRosNode : public rclcpp::Node {
                 "no_sky",
                 rclcpp::QoS(1).best_effort().durability_volatile(),
                 std::bind(&MavRosNode::no_sky_callback, this, std::placeholders::_1));
-            tag_dir_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
-                "tag_dir_frd",
+            cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::TwistStamped>(
+                "boids/cmd_vel",
                 rclcpp::QoS(1).best_effort().durability_volatile(),
-                std::bind(&MavRosNode::tag_dir_callback, this, std::placeholders::_1));
+                std::bind(&MavRosNode::cmd_vel_callback, this, std::placeholders::_1));
             uart_timer_ = this->create_wall_timer(10ms, [this](){ timer_callback(); });
             shm_fd = shm_open("pos_v_ned", O_CREAT | O_RDWR, 0666);
             ftruncate(shm_fd, 10*sizeof(float));
@@ -73,17 +73,20 @@ class MavRosNode : public rclcpp::Node {
         }
 
     private:
-        void tag_dir_callback(const geometry_msgs::msg::Vector3::UniquePtr tag_dir) {
-            if (act_idx == 1 || act_idx == 6) {
+        void cmd_vel_callback(const geometry_msgs::msg::TwistStamped::ConstSharedPtr cmd_vel) {
+            //if (act_idx == 1 || act_idx == 6) {
                 unsigned int len;
                 mavlink_message_t msg;
                 struct timespec tp;
                 clock_gettime(CLOCK_MONOTONIC, &tp);
                 leader_spotted_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
-                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, leader_spotted_ms, mav_sysid, 1, MAV_FRAME_BODY_FRD, 0xDC7, 0, 0, 0, tag_dir->x, tag_dir->y, tag_dir->z, 0, 0, 0, 0, 0);
+                auto & v = cmd_vel->twist.linear;
+                uint16_t type_mask = 0xDC7;
+                if (v.x < 0) type_mask = 0x5C7;
+                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, leader_spotted_ms, mav_sysid, 1, MAV_FRAME_BODY_FRD, type_mask, 0, 0, 0, v.x, -v.y, -v.z, 0, 0, 0, 0, 0);
                 len = mavlink_msg_to_send_buffer(buf, &msg);
                 write(uart_fd_, buf, len);
-            }
+            //}
         }
         void t_offset_callback(const std_msgs::msg::Int64::UniquePtr t_offset_msg) {
             pico_pi_t_offset = t_offset_msg->data;
@@ -232,7 +235,7 @@ class MavRosNode : public rclcpp::Node {
                             }
                             cur_mode = hb.custom_mode;
                             if (hb.custom_mode == 4) { // guided
-#if 1
+#if 0
                                 if (normal_gps_vel_acc == 0) {
                                     normal_gps_vel_acc = gps_vel_acc_w.mean();
                                     printf("normal gps vel acc:%d\n", normal_gps_vel_acc);
@@ -498,7 +501,7 @@ class MavRosNode : public rclcpp::Node {
         int yaw_align_delay_cnt = 0;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
-        rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr tag_dir_sub_;
+        rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel_sub_;
         rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr no_sky_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
 };
