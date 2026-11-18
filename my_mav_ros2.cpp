@@ -42,29 +42,20 @@ class MavRosNode : public rclcpp::Node {
         MavRosNode(int uart_fd) : Node("mavlink_ros"), uart_fd_(uart_fd) {
             odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
                 "odometry",
-                rclcpp::QoS(1).best_effort().durability_volatile(),
+                rclcpp::QoS(1).best_effort(),
                 std::bind(&MavRosNode::odom_callback, this, std::placeholders::_1));
             t_off_sub_ = this->create_subscription<std_msgs::msg::Int64>(
                 "pico_pi_t_offset",
-                rclcpp::QoS(1).best_effort().durability_volatile(),
+                rclcpp::QoS(1).best_effort(),
                 std::bind(&MavRosNode::t_offset_callback, this, std::placeholders::_1));
-            no_sky_sub_ = this->create_subscription<std_msgs::msg::Bool>(
-                "no_sky",
-                rclcpp::QoS(1).best_effort().durability_volatile(),
-                std::bind(&MavRosNode::no_sky_callback, this, std::placeholders::_1));
             cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::TwistStamped>(
                 "boids/cmd_vel",
-                rclcpp::QoS(1).best_effort().durability_volatile(),
+                rclcpp::QoS(1).best_effort(),
                 std::bind(&MavRosNode::cmd_vel_callback, this, std::placeholders::_1));
             uart_timer_ = this->create_wall_timer(10ms, [this](){ timer_callback(); });
-            shm_fd = shm_open("pos_v_ned", O_CREAT | O_RDWR, 0666);
-            ftruncate(shm_fd, 10*sizeof(float));
-            shm_ptr = (float*)mmap(0, 10*sizeof(float), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+            body_rate_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("body_rate", rclcpp::QoS(1).best_effort());
         }
         ~MavRosNode() {
-            munmap(shm_ptr, 10*sizeof(float));
-            close(shm_fd);
-            shm_unlink("pos_v_ned");
             if (vio_pid != 0) {
                 int status;
                 printf("waiting vio process to exit\n");
@@ -74,25 +65,20 @@ class MavRosNode : public rclcpp::Node {
 
     private:
         void cmd_vel_callback(const geometry_msgs::msg::TwistStamped::ConstSharedPtr cmd_vel) {
-            //if (act_idx == 1 || act_idx == 6) {
-                unsigned int len;
-                mavlink_message_t msg;
-                struct timespec tp;
-                clock_gettime(CLOCK_MONOTONIC, &tp);
-                leader_spotted_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
-                auto & v = cmd_vel->twist.linear;
-                uint16_t type_mask = 0xDC7;
-                if (v.x < 0) type_mask = 0x5C7;
-                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, leader_spotted_ms, mav_sysid, 1, MAV_FRAME_BODY_FRD, type_mask, 0, 0, 0, v.x, -v.y, -v.z, 0, 0, 0, 0, 0);
-                len = mavlink_msg_to_send_buffer(buf, &msg);
-                write(uart_fd_, buf, len);
-            //}
+            unsigned int len;
+            mavlink_message_t msg;
+            struct timespec tp;
+            clock_gettime(CLOCK_MONOTONIC, &tp);
+            leader_spotted_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
+            auto & v = cmd_vel->twist.linear;
+            uint16_t type_mask = 0xDC7;
+            if (v.x < 0) type_mask = 0x5C7;
+            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, leader_spotted_ms, mav_sysid, 1, MAV_FRAME_BODY_FRD, type_mask, 0, 0, 0, v.x, -v.y, -v.z, 0, 0, 0, 0, 0);
+            len = mavlink_msg_to_send_buffer(buf, &msg);
+            write(uart_fd_, buf, len);
         }
         void t_offset_callback(const std_msgs::msg::Int64::UniquePtr t_offset_msg) {
             pico_pi_t_offset = t_offset_msg->data;
-        }
-        void no_sky_callback(const std_msgs::msg::Bool::UniquePtr no_sky_msg) {
-            no_sky = no_sky_msg->data;
         }
         void odom_callback(const nav_msgs::msg::Odometry::UniquePtr odom_msg) {
             mavlink_message_t msg;
@@ -201,27 +187,27 @@ class MavRosNode : public rclcpp::Node {
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
                         }*/
-                        if (gps_raw_not_rcved) {
+                        /*if (gps_raw_not_rcved) {
                             mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_GPS_RAW_INT, 100'000, 0, 0
 , 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
-                        }
+                        }*/
                         /*if (ekf_status_not_rcved) {
                             mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_EKF_STATUS_REPORT, 200'000, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
                         }*/
                         if (att_q_not_rcved) {
-                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_ATTITUDE_QUATERNION, 100'000, 0, 0, 0, 0, 0);
+                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_ATTITUDE_QUATERNION, 50'000, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
                         }
-                        if (local_pos_not_rcved) {
+                        /*if (local_pos_not_rcved) {
                             mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_LOCAL_POSITION_NED, 100'000, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
-                        }
+                        }*/
                         if (hb.autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) {
                             is_apm = true;
                             ts_cnt++;
@@ -232,119 +218,6 @@ class MavRosNode : public rclcpp::Node {
                                 mavlink_msg_timesync_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, 0, (int64_t)tp.tv_sec * 1000000000 + tp.tv_nsec, mav_sysid, 1);
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd_, buf, len);
-                            }
-                            cur_mode = hb.custom_mode;
-                            if (hb.custom_mode == 4) { // guided
-#if 0
-                                if (normal_gps_vel_acc == 0) {
-                                    normal_gps_vel_acc = gps_vel_acc_w.mean();
-                                    printf("normal gps vel acc:%d\n", normal_gps_vel_acc);
-                                }
-                                if (act_idx == 0) {
-                                    act_idx = 1;
-                                    struct timespec tp;
-                                    clock_gettime(CLOCK_MONOTONIC, &tp);
-                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0x0DF8, 15, 0, -0.3f, 0, 0, 0, 0, 0, 0, 0, 0);
-                                    len = mavlink_msg_to_send_buffer(buf, &msg);
-                                    write(uart_fd_, buf, len);
-                                    RCLCPP_INFO(this->get_logger(), "mission start");
-                                } else if (act_idx == 1) {
-                                    if (gps_vel_acc_w.mean() > normal_gps_vel_acc * BAD_GPS_SCALE) bad_gps = true;
-                                    if (no_sky || bad_gps) {
-                                        act_idx = 2;
-                                        brake_cnt = 2; // give vehicle some time to stop
-                                        struct timespec tp;
-                                        clock_gettime(CLOCK_MONOTONIC, &tp);
-                                        int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
-                                        mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, now_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-                                        len = mavlink_msg_to_send_buffer(buf, &msg);
-                                        write(uart_fd_, buf, len);
-                                        mavlink_msg_param_set_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, "WP_YAW_BEHAVIOR", 0, 1);
-                                        len = mavlink_msg_to_send_buffer(buf, &msg);
-                                        write(uart_fd_, buf, len);
-                                        RCLCPP_INFO(this->get_logger(), "stop for gps to vio");
-                                    } else {
-                                        struct timespec tp;
-                                        clock_gettime(CLOCK_MONOTONIC, &tp);
-                                        int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
-                                        if (leader_spotted_ms && now_ms - leader_spotted_ms > 2000) {
-                                            mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, now_ms, mav_sysid, 1, MAV_FRAME_BODY_OFFSET_NED, 0xDC7, 0, 0, 0, 0.45f, 0, 0, 0, 0, 0, 0, 0);
-                                            len = mavlink_msg_to_send_buffer(buf, &msg);
-                                            write(uart_fd_, buf, len);
-                                            RCLCPP_INFO(this->get_logger(), "leader lost, move forward");
-                                        }
-                                    }
-                                } else if (act_idx == 2) {
-                                    --brake_cnt;
-                                    if (brake_cnt < 0) {
-                                        struct timespec tp;
-                                        clock_gettime(CLOCK_MONOTONIC, &tp);
-                                        int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
-                                        if (now_ms - latest_vio_ms > 3000) {
-                                            RCLCPP_ERROR(this->get_logger(), "no vio output");
-                                        } else {
-                                            if (vio_vel_var > 1*1) {
-                                                RCLCPP_ERROR(this->get_logger(), "vio high vel var: %f", vio_vel_var);
-                                            } else {
-                                                act_idx = 3;
-                                                latest_yaw_reset_ms = 0;
-                                                mavlink_msg_command_int_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_FRAME_GLOBAL, 42007, 0, 0, 2, 0, 0, 0, 0, 0, 0);
-                                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                                write(uart_fd_, buf, len);
-                                                RCLCPP_INFO(this->get_logger(), "ekf switch to src2(vio)");
-                                            }
-                                        }
-                                    }
-                                } else if (act_idx == 3) {
-                                    struct timespec tp;
-                                    clock_gettime(CLOCK_MONOTONIC, &tp);
-                                    int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
-                                    if (now_ms - latest_yaw_reset_ms > 500) { // wait pos reset done
-                                        if (bad_gps) act_idx = 5; else act_idx = 4;
-                                        RCLCPP_INFO(this->get_logger(), "ekf reset done, carry on");
-                                    }
-                                } else if (act_idx == 4) {
-                                    act_idx = 5;
-                                    start_local_pos = local_pos;
-                                    struct timespec tp;
-                                    clock_gettime(CLOCK_MONOTONIC, &tp);
-                                    mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_OFFSET_NED, 0x0DF8, DIST_A+0.5f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-                                    len = mavlink_msg_to_send_buffer(buf, &msg);
-                                    write(uart_fd_, buf, len);
-                                    RCLCPP_INFO(this->get_logger(), "forward");
-                                } else if (act_idx == 10) {
-                                    act_idx = 11;
-                                    mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_DO_SET_MODE, 0, 1, 6, 0, 0, 0, 0, 0); // rtl
-                                    len = mavlink_msg_to_send_buffer(buf, &msg);
-                                    write(uart_fd_, buf, len);
-                                    RCLCPP_INFO(this->get_logger(), "rtl");
-                                }
-#endif
-                            } else if (hb.custom_mode == 17) { // brake
-                                if (act_idx == 8) {
-                                    --brake_cnt;
-                                    if (brake_cnt < 0) {
-                                        act_idx = 9;
-                                        latest_yaw_reset_ms = 0;
-                                        mavlink_msg_command_int_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_FRAME_GLOBAL, 42007, 0, 0, 1, 0, 0, 0, 0, 0, 0);
-                                        len = mavlink_msg_to_send_buffer(buf, &msg);
-                                        write(uart_fd_, buf, len);
-                                        RCLCPP_INFO(this->get_logger(), "ekf switch to src1(gps)");
-                                    }
-                                } else if (act_idx == 9) {
-                                    struct timespec tp;
-                                    clock_gettime(CLOCK_MONOTONIC, &tp);
-                                    int now_ms = tp.tv_sec * 1000 + tp.tv_nsec / 1000000;
-                                    if (now_ms - latest_yaw_reset_ms > 500) { // wait pos reset done
-                                        act_idx = 10;
-                                        mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_DO_SET_MODE, 0, 1, 4, 0, 0, 0, 0, 0); // guided
-                                        len = mavlink_msg_to_send_buffer(buf, &msg);
-                                        write(uart_fd_, buf, len);
-                                        RCLCPP_INFO(this->get_logger(), "ekf reset done, carry on");
-                                    }
-                                }
-                            } else {
-                                act_idx = 0;
                             }
                         }
                     } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
@@ -398,67 +271,24 @@ class MavRosNode : public rclcpp::Node {
                         ekf_status_not_rcved = false;
                         mavlink_ekf_status_report_t ekf_status;
                         mavlink_msg_ekf_status_report_decode(&msg, &ekf_status);
-                        //if (cur_mode == COPTER_MODE_LOITER && not_landed) printf("mag var:%f\n", ekf_status.compass_variance);
                         if (prv_mag_bad && ekf_status.compass_variance > 0.9) mag_bad = true; else mag_bad = false;
                         if (ekf_status.compass_variance > 0.9) prv_mag_bad = true; else prv_mag_bad = false;
                     } else if (msg.msgid == MAVLINK_MSG_ID_ATTITUDE_QUATERNION) {
                         att_q_not_rcved = false;
                         mavlink_attitude_quaternion_t att;
                         mavlink_msg_attitude_quaternion_decode(&msg, &att);
-                        shm_ptr[0] = att.q1;
-                        shm_ptr[1] = att.q2;
-                        shm_ptr[2] = att.q3;
-                        shm_ptr[3] = att.q4;
-                        att_q = Eigen::Quaternionf(att.q1, att.q2, att.q3, att.q4);
+                        auto t = geometry_msgs::msg::TwistStamped();
+                        t.header.stamp = this->get_clock()->now();
+                        t.header.frame_id = "body";
+                        t.twist.angular.x =  att.rollspeed;
+                        t.twist.angular.y = -att.pitchspeed;
+                        t.twist.angular.z = -att.yawspeed;
+                        body_rate_pub_->publish(t);
                     } else if (msg.msgid == MAVLINK_MSG_ID_LOCAL_POSITION_NED) {
                         local_pos_not_rcved = false;
                         mavlink_local_position_ned_t pos;
                         mavlink_msg_local_position_ned_decode(&msg, &pos);
                         local_pos = Eigen::Vector3f(pos.x, pos.y, pos.z);
-                        if (act_idx == 5) {
-                            if ((local_pos - start_local_pos).squaredNorm() > DIST_A * DIST_A) {
-                                act_idx = 6;
-                                start_local_pos = local_pos;
-                                struct timespec tp;
-                                clock_gettime(CLOCK_MONOTONIC, &tp);
-                                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_OFFSET_NED, 0x0DF8, 0, -(DIST_B+0.5f), 0, 0, 0, 0, 0, 0, 0, 0, 0);
-                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                write(uart_fd_, buf, len);
-                                mavlink_msg_param_set_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, "WP_YAW_BEHAVIOR", 2, 1);
-                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                write(uart_fd_, buf, len);
-                                yaw_align_delay_cnt = 10;
-                                RCLCPP_INFO(this->get_logger(), "through canopy");
-                            }
-                        } else if (act_idx == 6) {
-                            --yaw_align_delay_cnt;
-                            if (!yaw_align_delay_cnt) {
-                                struct timespec tp;
-                                clock_gettime(CLOCK_MONOTONIC, &tp);
-                                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_OFFSET_NED, 0x0DF8, 0, -(DIST_B+0.5f), 0, 0, 0, 0, 0, 0, 0, 0, 0);
-                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                write(uart_fd_, buf, len);
-                            }
-                            if ((local_pos - start_local_pos).squaredNorm() > DIST_B * DIST_B) {
-                                act_idx = 7;
-                                start_local_pos = local_pos;
-                                struct timespec tp;
-                                clock_gettime(CLOCK_MONOTONIC, &tp);
-                                mavlink_msg_set_position_target_local_ned_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, tp.tv_sec*1000+tp.tv_nsec/1000000, mav_sysid, 1, MAV_FRAME_LOCAL_OFFSET_NED, 0x0DF8, -(DIST_C+0.5f), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                write(uart_fd_, buf, len);
-                                RCLCPP_INFO(this->get_logger(), "leave canopy");
-                            }
-                        } else if (act_idx == 7) {
-                            if ((local_pos - start_local_pos).squaredNorm() > DIST_C * DIST_C) {
-                                act_idx = 8;
-                                brake_cnt = 2; // give brake some time to stop vehicle
-                                mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_DO_SET_MODE, 0, 1, 17, 0, 0, 0, 0, 0); // brake
-                                len = mavlink_msg_to_send_buffer(buf, &msg);
-                                write(uart_fd_, buf, len);
-                                RCLCPP_INFO(this->get_logger(), "brake for vio to gps");
-                            }
-                        }
                     }
                 }
             }
@@ -480,20 +310,15 @@ class MavRosNode : public rclcpp::Node {
         bool mag_bad = false;
         bool prv_mag_bad = false;
         bool not_landed = false;
-        uint32_t cur_mode = 0;
         int brake_cnt = 0;
         bool local_pos_not_rcved = true;
         Eigen::Vector3f start_local_pos = Eigen::Vector3f::Zero();
         Eigen::Vector3f local_pos = Eigen::Vector3f::Zero();
         bool att_q_not_rcved = true;
-        Eigen::Quaternionf att_q = Eigen::Quaternionf::Identity();
-        int shm_fd;
-        float* shm_ptr;
         float vio_vel_var = 0;
         int latest_vio_ms = 0;
         pid_t vio_pid = 0;
         bool fc_use_vio = false;
-        bool no_sky = false;
         bool bad_gps = false;
         MySlidingWindow<3> gps_vel_acc_w;
         uint32_t normal_gps_vel_acc;
@@ -502,8 +327,8 @@ class MavRosNode : public rclcpp::Node {
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
         rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel_sub_;
-        rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr no_sky_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
+        rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr body_rate_pub_;
 };
 
 int main(int argc, char *argv[]) {
