@@ -53,7 +53,7 @@ class MavRosNode : public rclcpp::Node {
                 rclcpp::QoS(1).best_effort(),
                 std::bind(&MavRosNode::cmd_vel_callback, this, std::placeholders::_1));
             uart_timer_ = this->create_wall_timer(10ms, [this](){ timer_callback(); });
-            body_rate_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("body_rate", rclcpp::QoS(1).best_effort());
+            fc_vel_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("fc_vel", rclcpp::QoS(1).best_effort());
         }
         ~MavRosNode() {
             if (vio_pid != 0) {
@@ -203,11 +203,11 @@ class MavRosNode : public rclcpp::Node {
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
                         }
-                        /*if (local_pos_not_rcved) {
-                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_LOCAL_POSITION_NED, 100'000, 0, 0, 0, 0, 0);
+                        if (local_pos_not_rcved) {
+                            mavlink_msg_command_long_pack(mav_sysid, MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY, &msg, mav_sysid, 1, MAV_CMD_SET_MESSAGE_INTERVAL, 0, MAVLINK_MSG_ID_LOCAL_POSITION_NED, 50'000, 0, 0, 0, 0, 0);
                             len = mavlink_msg_to_send_buffer(buf, &msg);
                             write(uart_fd_, buf, len);
-                        }*/
+                        }
                         if (hb.autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) {
                             is_apm = true;
                             ts_cnt++;
@@ -277,18 +277,24 @@ class MavRosNode : public rclcpp::Node {
                         att_q_not_rcved = false;
                         mavlink_attitude_quaternion_t att;
                         mavlink_msg_attitude_quaternion_decode(&msg, &att);
+                        auto att_q = Eigen::Quaternionf(att.q1, att.q2, att.q3, att.q4);
+                        // world NED -> body FRD: v_body = R(q)^T * v_ned
+                        Eigen::Vector3f v_frd = att_q.conjugate() * vel_ned;
                         auto t = geometry_msgs::msg::TwistStamped();
                         t.header.stamp = this->get_clock()->now();
                         t.header.frame_id = "body";
-                        t.twist.angular.x =  att.rollspeed;
+                        t.twist.linear.x =  v_frd.x();   // FRD -> FLU: flip y and z
+                        t.twist.linear.y = -v_frd.y();
+                        t.twist.linear.z = -v_frd.z();
+                        t.twist.angular.x = att.rollspeed;
                         t.twist.angular.y = -att.pitchspeed;
                         t.twist.angular.z = -att.yawspeed;
-                        body_rate_pub_->publish(t);
+                        fc_vel_pub_->publish(t);
                     } else if (msg.msgid == MAVLINK_MSG_ID_LOCAL_POSITION_NED) {
                         local_pos_not_rcved = false;
                         mavlink_local_position_ned_t pos;
                         mavlink_msg_local_position_ned_decode(&msg, &pos);
-                        local_pos = Eigen::Vector3f(pos.x, pos.y, pos.z);
+                        vel_ned << pos.vz, pos.vy, pos.vz;
                     }
                 }
             }
@@ -312,8 +318,6 @@ class MavRosNode : public rclcpp::Node {
         bool not_landed = false;
         int brake_cnt = 0;
         bool local_pos_not_rcved = true;
-        Eigen::Vector3f start_local_pos = Eigen::Vector3f::Zero();
-        Eigen::Vector3f local_pos = Eigen::Vector3f::Zero();
         bool att_q_not_rcved = true;
         float vio_vel_var = 0;
         int latest_vio_ms = 0;
@@ -324,11 +328,12 @@ class MavRosNode : public rclcpp::Node {
         uint32_t normal_gps_vel_acc;
         int leader_spotted_ms = 0;
         int yaw_align_delay_cnt = 0;
+        Eigen::Vector3f vel_ned = Eigen::Vector3f::Zero();
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
         rclcpp::Subscription<std_msgs::msg::Int64>::SharedPtr t_off_sub_;
         rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
-        rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr body_rate_pub_;
+        rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr fc_vel_pub_;
 };
 
 int main(int argc, char *argv[]) {

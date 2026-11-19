@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.8)
 project(mav_ros2)
 
 set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS_RELEASE "-O2 -Wall -Wno-address-of-packed-member")
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -Wall -Wextra -Wno-address-of-packed-member")
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
