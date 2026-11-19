@@ -294,7 +294,7 @@ class MavRosNode : public rclcpp::Node {
                         local_pos_not_rcved = false;
                         mavlink_local_position_ned_t pos;
                         mavlink_msg_local_position_ned_decode(&msg, &pos);
-                        vel_ned << pos.vz, pos.vy, pos.vz;
+                        vel_ned << pos.vx, pos.vy, pos.vz;
                     }
                 }
             }
