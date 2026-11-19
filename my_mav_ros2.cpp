@@ -54,6 +54,7 @@ class MavRosNode : public rclcpp::Node {
                 std::bind(&MavRosNode::cmd_vel_callback, this, std::placeholders::_1));
             uart_timer_ = this->create_wall_timer(10ms, [this](){ timer_callback(); });
             fc_vel_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>("fc_vel", rclcpp::QoS(1).best_effort());
+            fc_rdy_pub_ = this->create_publisher<std_msgs::msg::Bool>("fc_rdy", rclcpp::QoS(1).best_effort());
         }
         ~MavRosNode() {
             if (vio_pid != 0) {
@@ -219,6 +220,9 @@ class MavRosNode : public rclcpp::Node {
                                 len = mavlink_msg_to_send_buffer(buf, &msg);
                                 write(uart_fd_, buf, len);
                             }
+                            auto ok = std_msgs::msg::Bool();
+                            ok.data = hb.custom_mode == 4;  // guided
+                            fc_rdy_pub_->publish(ok);
                         }
                     } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
                         mavlink_statustext_t txt;
@@ -334,6 +338,7 @@ class MavRosNode : public rclcpp::Node {
         rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel_sub_;
         rclcpp::TimerBase::SharedPtr uart_timer_;
         rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr fc_vel_pub_;
+        rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr fc_rdy_pub_;
 };
 
 int main(int argc, char *argv[]) {
